@@ -38,7 +38,7 @@ services:
       - rmq_broker_logs:/home/rocketmq/logs
       - rmq_broker_store:/home/rocketmq/store
       - ./rocketmq/conf/broker.conf:/home/rocketmq/conf/broker.conf
-    command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/conf/broker.conf --enable-proxy
+    command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/conf/broker.conf
     environment:
       NAMESRV_ADDR: namesrv:9876
       JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
