@@ -1,0 +1,35 @@
+# =====================================================================
+# gateway 配置(Ph3:接入 Nacos discovery)
+# =====================================================================
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        username: nacos
+        password: nacos
+        namespace: public                        # 骨架阶段统一 public,Ph4 起再拆 dev/test/prod
+      config:
+        import-check:
+          enabled: false                         # Ph3 只接 discovery,关掉 config 的强制 import 检查;Ph4 打开
+      # config: 骨架阶段暂不接,配置全部本地 yaml。Ph4 再打开。
+    # 网关基础路由:骨架阶段用服务发现自动路由,访问 /{service-name}/** 即转发到对应服务
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always

@@ -1,0 +1,28 @@
+# =====================================================================
+# user-service 配置(Ph3:接入 Nacos discovery)
+# =====================================================================
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        username: nacos
+        password: nacos
+        namespace: public
+      config:
+        import-check:
+          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always

@@ -1,0 +1,179 @@
+# ============================================================================
+# .gitignore — welove-shop-agt (develop 分支,微服务架构)
+# 说明:
+#   - 单体架构相关的忽略规则请见 monolith/develop 分支的 .gitignore
+#   - 本文件面向未来的 Spring Cloud 微服务 + Python ai-service
+# ============================================================================
+
+# -------- IDE / 编辑器 --------
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.settings/
+.project
+.classpath
+.factorypath
+.recommenders/
+nbproject/private/
+
+# -------- 操作系统噪音 --------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# -------- Java / Maven / Gradle 构建产物 --------
+target/
+build/
+out/
+bin/
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.mvn/wrapper/maven-wrapper.jar
+dependency-reduced-pom.xml
+release.properties
+
+# Spring Boot 打包产物
+*.jar
+*.war
+*.ear
+!**/gradle-wrapper.jar
+!**/mvnw*.jar
+
+# -------- Python (ai-service) --------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+pip-wheel-metadata/
+*.pyd
+
+# Python 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# -------- Node / 前端(未来接入前端时会用到) --------
+node_modules/
+dist/
+.next/
+.nuxt/
+.parcel-cache/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# -------- Android(微服务侧暂不保留 Android 项目) --------
+# 完整 Android 项目源码保留在 monolith/develop 分支
+backend/android/
+android/
+**/android/**/build/
+**/android/**/.gradle/
+**/android/**/local.properties
+**/android/**/.cxx/
+
+# -------- 日志与本地产物 --------
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.orig
+
+# -------- 数据/存储(严禁进 Git) --------
+# Docker bind mount 的中间件数据目录
+volumes/
+**/volumes/
+# 数据库导出、备份文件
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+*.tar.gz
+volume-backup-*/
+
+# -------- 敏感信息(严禁进 Git) --------
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.crt
+*.p12
+!**/gradle/wrapper/*
+secrets/
+credentials/
+
+# -------- Claude / AI 工具本地配置 --------
+.claude/
+.agents/
+.github/modernize/
+.aider*
+.cursorrules
+.mcp.json
+
+# -------- 微服务专属 --------
+# 服务本地开发临时目录
+services/**/logs/
+services/**/tmp/
+services/**/target/
+gateway/logs/
+gateway/target/
+admin-bff/logs/
+admin-bff/target/
+
+# -------- 其他工具 --------
+*.pid
+*.seed
+*.pid.lock
+.DS_Store?
+._*
+
+# ============================================================================
+# 单体项目遗留资源(monolith 侧的本地文件也可能会出现在这里,一并覆盖)
+# 说明:.idea/target/android/volumes/__pycache__ 等已在上文覆盖,此段仅补差异项
+# ============================================================================
+
+# 单体附带的第三方二进制/文档
+/backend/nginx-1.18.0/
+/backend/docs/
+
+# 单体专属敏感配置与临时接口
+/backend/src/main/resources/application-dev.yml
+/backend/src/main/java/com/demo/weloveShopSystem/controller/TestController.java
+
+# 微服务开发阶段暂不入 develop 分支,后续按需再逐步纳入:
+#   - backend/db/         : 建表脚本 + 100 商品 JSON + 灌数据脚本 (单体前置数据)
+#   - backend/welove-shop/: uni-app 前端源码(微服务完成后接入)
+#   - backend/ai-service/ : Python AI 服务(挪到根目录后再入库)
+#   - backend/pom.xml     : 单体 Maven 配置(微服务用父 POM,不需要)
+# 商品图片走对象存储/CDN,本地 images 目录始终不入库
+/backend/db/data/ecommerce_agent_dataset/*/images/
+/backend/db/
+/backend/welove-shop/
+/backend/ai-service/
+/backend/pom.xml
