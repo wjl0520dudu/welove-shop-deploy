@@ -1,0 +1,27 @@
+# =====================================================================
+# gateway 骨架配置(Ph1 阶段最小可启动配置)
+# 后续:路由规则/鉴权/限流/CORS 走 Nacos 配置中心
+# =====================================================================
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  # Nacos 集成放到 Ph2 骨架阶段先注释,仅保留最小可启动配置
+  # cloud:
+  #   nacos:
+  #     discovery:
+  #       server-addr: 127.0.0.1:8848
+  #     config:
+  #       server-addr: 127.0.0.1:8848
+  #       file-extension: yaml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always

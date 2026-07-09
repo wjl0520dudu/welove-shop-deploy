@@ -1,0 +1,15 @@
+# =====================================================================
+# admin-bff 骨架配置(Ph1)
+# =====================================================================
+server:
+  port: 8090
+
+spring:
+  application:
+    name: admin-bff
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

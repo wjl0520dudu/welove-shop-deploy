@@ -1,0 +1,15 @@
+# =====================================================================
+# chat-service 骨架配置(Ph1)
+# =====================================================================
+server:
+  port: 8084
+
+spring:
+  application:
+    name: chat-service
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -1,0 +1,16 @@
+# =====================================================================
+# user-service 骨架配置(Ph1 阶段最小可启动配置)
+# =====================================================================
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-service
+  # Nacos / DataSource 集成待 Ph2/Ph3 骨架阶段接入
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

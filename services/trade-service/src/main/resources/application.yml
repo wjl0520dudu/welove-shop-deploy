@@ -1,0 +1,15 @@
+# =====================================================================
+# trade-service 骨架配置(Ph1)
+# =====================================================================
+server:
+  port: 8083
+
+spring:
+  application:
+    name: trade-service
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

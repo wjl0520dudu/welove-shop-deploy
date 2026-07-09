@@ -1,0 +1,15 @@
+# =====================================================================
+# product-service 骨架配置(Ph1)
+# =====================================================================
+server:
+  port: 8082
+
+spring:
+  application:
+    name: product-service
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
