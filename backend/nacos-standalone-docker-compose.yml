@@ -1,0 +1,39 @@
+# =====================================================================
+# Nacos 单机 compose(Ph2 骨架阶段基础设施)
+# 部署模式:standalone + 内嵌 derby(单容器,重启后配置持久化于 named volume)
+# 版本:2.3.2(与 spring-cloud-alibaba 2023.0.1.2 兼容:客户端 2.3.x)
+# 启动:  docker compose -f nacos-standalone-docker-compose.yml up -d
+# 停止:  docker compose -f nacos-standalone-docker-compose.yml down
+# 控制台: http://localhost:8848/nacos  (默认账号 nacos / nacos)
+# =====================================================================
+services:
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: welove-shop-nacos
+    environment:
+      MODE: standalone                          # 单机模式(derby)
+      NACOS_AUTH_ENABLE: "true"                 # 开启鉴权(默认账号 nacos/nacos)
+      NACOS_AUTH_TOKEN: SecretKey0123456789012345678901234567890123456789012345678901234567890123456789   # >32 字节 base64 明文可
+      NACOS_AUTH_IDENTITY_KEY: nacos
+      NACOS_AUTH_IDENTITY_VALUE: nacos
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+    ports:
+      - "8848:8848"                             # HTTP 主端口(控制台/OpenAPI)
+      - "9848:9848"                             # 客户端 gRPC 端口(2.x 起必需)
+      - "9849:9849"                             # 服务端间 gRPC(集群用,单机也开着不影响)
+    volumes:
+      - nacos_data:/home/nacos/data             # derby 数据+配置持久化
+      - nacos_logs:/home/nacos/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  nacos_data:
+  nacos_logs:

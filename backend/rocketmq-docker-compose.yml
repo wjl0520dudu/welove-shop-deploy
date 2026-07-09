@@ -1,0 +1,71 @@
+# =====================================================================
+# RocketMQ compose(Ph2 骨架阶段基础设施)
+# 组件:NameServer + Broker + Dashboard
+# 版本:5.3.1(与 spring-cloud-alibaba 2023.0.1.2 兼容)
+# 启动:  docker compose -f rocketmq-docker-compose.yml up -d
+# 停止:  docker compose -f rocketmq-docker-compose.yml down
+# Dashboard: http://localhost:8181  (无鉴权,骨架阶段本机用)
+#
+# Windows/Mac Docker Desktop 直接可用。
+# Linux 需要在启动前把 broker.conf 里 brokerIP1 改成宿主机 IP。
+# =====================================================================
+services:
+  namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: welove-shop-rmqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rmq_namesrv_logs:/home/rocketmq/logs
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 9876 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  broker:
+    image: apache/rocketmq:5.3.1
+    container_name: welove-shop-rmqbroker
+    ports:
+      - "10909:10909"                            # broker vip 通道
+      - "10911:10911"                            # broker 主端口(生产者/消费者)
+      - "10912:10912"                            # broker HA 端口
+    volumes:
+      - rmq_broker_logs:/home/rocketmq/logs
+      - rmq_broker_store:/home/rocketmq/store
+      - ./rocketmq/conf/broker.conf:/home/rocketmq/conf/broker.conf
+    command: sh mqbroker -n namesrv:9876 -c /home/rocketmq/conf/broker.conf --enable-proxy
+    environment:
+      NAMESRV_ADDR: namesrv:9876
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+    depends_on:
+      namesrv:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 10911 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  dashboard:
+    image: apacherocketmq/rocketmq-dashboard:1.0.0
+    container_name: welove-shop-rmqdashboard
+    ports:
+      - "8181:8080"                              # 宿主机 8181 避开 gateway 的 8080
+    environment:
+      # 指向本 compose 内的 namesrv 容器
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false"
+    depends_on:
+      - namesrv
+    restart: unless-stopped
+
+volumes:
+  rmq_namesrv_logs:
+  rmq_broker_logs:
+  rmq_broker_store:
