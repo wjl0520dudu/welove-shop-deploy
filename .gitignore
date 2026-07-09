@@ -152,3 +152,28 @@ admin-bff/target/
 *.pid.lock
 .DS_Store?
 ._*
+
+# ============================================================================
+# 单体项目遗留资源(monolith 侧的本地文件也可能会出现在这里,一并覆盖)
+# 说明:.idea/target/android/volumes/__pycache__ 等已在上文覆盖,此段仅补差异项
+# ============================================================================
+
+# 单体附带的第三方二进制/文档
+/backend/nginx-1.18.0/
+/backend/docs/
+
+# 单体专属敏感配置与临时接口
+/backend/src/main/resources/application-dev.yml
+/backend/src/main/java/com/demo/weloveShopSystem/controller/TestController.java
+
+# 微服务开发阶段暂不入 develop 分支,后续按需再逐步纳入:
+#   - backend/db/         : 建表脚本 + 100 商品 JSON + 灌数据脚本 (单体前置数据)
+#   - backend/welove-shop/: uni-app 前端源码(微服务完成后接入)
+#   - backend/ai-service/ : Python AI 服务(挪到根目录后再入库)
+#   - backend/pom.xml     : 单体 Maven 配置(微服务用父 POM,不需要)
+# 商品图片走对象存储/CDN,本地 images 目录始终不入库
+/backend/db/data/ecommerce_agent_dataset/*/images/
+/backend/db/
+/backend/welove-shop/
+/backend/ai-service/
+/backend/pom.xml

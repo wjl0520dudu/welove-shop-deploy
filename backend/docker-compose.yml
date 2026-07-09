@@ -52,6 +52,10 @@ services:
       retries: 5
     restart: unless-stopped
 
+# Milvus 单机版（etcd + minio + standalone）走独立 compose：
+#   docker compose -f milvus-standalone-docker-compose.yml up -d
+# 数据卷挂在 backend/volumes/{etcd,minio,milvus}/（.gitignore 忽略入库）
+
 volumes:
   mysql_data:
   redis_data:
