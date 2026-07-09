@@ -1,5 +1,9 @@
 # =====================================================================
-# product-service 配置(Ph3:接入 Nacos discovery)
+# product-service 配置(feat/ms-product)
+# 端口:8082
+# 数据库:PostgreSQL @ localhost:5432 / welove_shop_search / schema=product_svc
+# 缓存:Redis @ localhost:6379(商品详情/分类/热门 3 类缓存)
+# 注册中心:Nacos @ localhost:8848
 # =====================================================================
 server:
   port: 8082
@@ -7,6 +11,8 @@ server:
 spring:
   application:
     name: product-service
+
+  # ---------- Nacos ----------
   cloud:
     nacos:
       discovery:
@@ -16,13 +22,76 @@ spring:
         namespace: public
       config:
         import-check:
-          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+          enabled: false
 
+  # ---------- PostgreSQL ----------
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/welove_shop_search?currentSchema=product_svc&stringtype=unspecified
+    username: root
+    password: 12345678
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: product-svc-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ---------- Flyway ----------
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    default-schema: product_svc
+    schemas: product_svc
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  # ---------- Redis ----------
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+# ---------- MyBatis-Plus ----------
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# ---------- JWT(骨架期与 user-service 一致,方便 token 通用) ----------
+jwt:
+  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
+  expiration: ${JWT_EXPIRATION:3600000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}
+  header: Authorization
+  prefix: "Bearer "
+
+# ---------- 业务开关 ----------
+product-service:
+  cache:
+    # 商品详情缓存 TTL(秒),0 关闭
+    product-detail-ttl: 300
+    # 分类列表缓存 TTL(秒)
+    category-list-ttl: 600
+    # 热门商品缓存 TTL(秒)
+    hot-products-ttl: 60
+
+# ---------- 管理端点 ----------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,env
   endpoint:
     health:
       show-details: always
