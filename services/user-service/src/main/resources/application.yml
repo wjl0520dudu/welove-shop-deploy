@@ -1,5 +1,9 @@
 # =====================================================================
-# user-service 配置(Ph3:接入 Nacos discovery)
+# user-service 配置(feat/ms-user)
+# 端口:8081
+# 数据库:PostgreSQL @ localhost:5432 / welove_shop_search / schema=user_svc
+# 缓存:Redis @ localhost:6379(短信验证码)
+# 注册中心:Nacos @ localhost:8848
 # =====================================================================
 server:
   port: 8081
@@ -7,6 +11,8 @@ server:
 spring:
   application:
     name: user-service
+
+  # ---------- Nacos ----------
   cloud:
     nacos:
       discovery:
@@ -16,13 +22,74 @@ spring:
         namespace: public
       config:
         import-check:
-          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+          enabled: false                         # 骨架期不接 Nacos config,配置全部本地 yml
 
+  # ---------- PostgreSQL ----------
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/welove_shop_search?currentSchema=user_svc&stringtype=unspecified
+    username: root
+    password: 12345678
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: user-svc-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ---------- Flyway ----------
+  flyway:
+    enabled: true
+    baseline-on-migrate: true                    # 已有库上首次运行也允许
+    default-schema: user_svc                     # 迁移写入的 schema
+    schemas: user_svc                            # 若 schema 不存在,自动创建
+    locations: classpath:db/migration            # 迁移脚本路径
+    validate-on-migrate: true
+
+  # ---------- Redis ----------
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      # password:  # 骨架期无密码
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+# ---------- MyBatis-Plus ----------
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto                              # 与 PG IDENTITY 对齐
+      # 无逻辑删除字段(骨架期不启用)
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl   # 开发期打印 SQL
+
+# ---------- JWT ----------
+jwt:
+  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
+  expiration: ${JWT_EXPIRATION:3600000}          # access token 1h
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}  # refresh token 24h
+  header: Authorization
+  prefix: "Bearer "
+
+# ---------- 业务开关 ----------
+user-service:
+  sms:
+    mock: true                                   # true=控制台打印验证码,不真发短信
+    code-ttl-seconds: 300                        # 5 分钟
+
+# ---------- 管理端点 ----------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,env
   endpoint:
     health:
       show-details: always
