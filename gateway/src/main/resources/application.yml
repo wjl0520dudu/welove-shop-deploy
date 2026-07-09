@@ -1,6 +1,5 @@
 # =====================================================================
-# gateway 骨架配置(Ph1 阶段最小可启动配置)
-# 后续:路由规则/鉴权/限流/CORS 走 Nacos 配置中心
+# gateway 配置(Ph3:接入 Nacos discovery)
 # =====================================================================
 server:
   port: 8080
@@ -8,14 +7,20 @@ server:
 spring:
   application:
     name: gateway
-  # Nacos 集成放到 Ph2 骨架阶段先注释,仅保留最小可启动配置
-  # cloud:
-  #   nacos:
-  #     discovery:
-  #       server-addr: 127.0.0.1:8848
-  #     config:
-  #       server-addr: 127.0.0.1:8848
-  #       file-extension: yaml
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        username: nacos
+        password: nacos
+        namespace: public                        # 骨架阶段统一 public,Ph4 起再拆 dev/test/prod
+      # config: 骨架阶段暂不接,配置全部本地 yaml。Ph4 再打开。
+    # 网关基础路由:骨架阶段用服务发现自动路由,访问 /{service-name}/** 即转发到对应服务
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
 
 management:
   endpoints:

@@ -1,5 +1,5 @@
 # =====================================================================
-# user-service 骨架配置(Ph1 阶段最小可启动配置)
+# user-service 配置(Ph3:接入 Nacos discovery)
 # =====================================================================
 server:
   port: 8081
@@ -7,10 +7,19 @@ server:
 spring:
   application:
     name: user-service
-  # Nacos / DataSource 集成待 Ph2/Ph3 骨架阶段接入
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        username: nacos
+        password: nacos
+        namespace: public
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: always

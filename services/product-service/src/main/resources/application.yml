@@ -1,5 +1,5 @@
 # =====================================================================
-# product-service 骨架配置(Ph1)
+# product-service 配置(Ph3:接入 Nacos discovery)
 # =====================================================================
 server:
   port: 8082
@@ -7,9 +7,19 @@ server:
 spring:
   application:
     name: product-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+        username: nacos
+        password: nacos
+        namespace: public
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: always
