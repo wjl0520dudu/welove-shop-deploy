@@ -83,7 +83,10 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
 
-# -------- Android(如后续保留) --------
+# -------- Android(微服务侧暂不保留 Android 项目) --------
+# 完整 Android 项目源码保留在 monolith/develop 分支
+backend/android/
+android/
 **/android/**/build/
 **/android/**/.gradle/
 **/android/**/local.properties
