@@ -34,7 +34,7 @@
         <spring-cloud-alibaba.version>2023.0.1.2</spring-cloud-alibaba.version>
 
         <!-- 数据层 -->
-        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <mybatis-plus.version>3.5.9</mybatis-plus.version>
         <postgresql.version>42.7.3</postgresql.version>
         <mysql.version>8.4.0</mysql.version>
 

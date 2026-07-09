@@ -221,3 +221,141 @@ A: 服务的 `application.yml` 里 `username/password` 与 Nacos 不一致。骨
 
 **Q: 网关的 /{service-name}/** 转发 404?**
 A: 检查 gateway 的 `spring.cloud.gateway.discovery.locator.lower-case-service-id: true`,注意用户 URL 里 service-name 要用**小写**(如 `/user-service/...` 而不是 `/USER-SERVICE/...`)。
+
+---
+
+## user-service 全链路验证(feat/ms-user)
+
+**前置条件:**
+1. Docker 中间件已启动:PostgreSQL(5432) + Redis(6379) + Nacos(8848)
+2. Nacos 控制台可登录 http://localhost:8848/nacos(nacos/nacos)
+
+### 启动 user-service
+
+VSCode Spring Boot Dashboard 里点 `user-service` 的 ▶️,或命令行:
+
+```bash
+mvn -pl services/user-service spring-boot:run
+```
+
+**首次启动会:**
+- Flyway 自动创建 `user_svc` schema
+- 执行 `V1__init_user_svc.sql` 创建 users / address / user_browse_history / user_favorite 四张表
+- 注册到 Nacos(可在控制台 `服务管理 → 服务列表` 看到 user-service)
+
+### curl 全链路验证
+
+**步骤 1:发送短信验证码**(骨架期 mock,验证码打印在 user-service 控制台)
+
+```bash
+curl -s -X POST "http://localhost:8081/api/auth/sendCode?phone=13800138000"
+# 期望: {"code":0,"message":"success","data":"验证码已发送"}
+```
+
+**在 user-service 控制台查看 `[SMS-MOCK] 已发送验证码到 13800138000: 123456` 的日志,复制 6 位验证码。**
+
+**步骤 2:登录**(用上一步的验证码;未注册手机号会自动建账号)
+
+```bash
+curl -s -X POST http://localhost:8081/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"13800138000","code":"123456"}'
+# 期望: {"code":0,"message":"success","data":{"user":{...},"token":"eyJhbG...","refreshToken":"eyJhbG...","tokenType":"Bearer"}}
+```
+
+**保存返回的 `token` 值到环境变量:**
+```bash
+export TOKEN='粘贴上面返回的 token'
+```
+
+**步骤 3:查自己资料**(需要 token,验证 JWT 拦截器)
+
+```bash
+curl -s http://localhost:8081/api/auth/profile -H "Authorization: Bearer $TOKEN"
+# 期望: {"code":0,"message":"success","data":{"id":1,"username":"用户8000",...}}
+```
+
+**步骤 4:更新资料**
+
+```bash
+curl -s -X POST http://localhost:8081/api/auth/update \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"张三","gender":1,"skinType":"油皮","preferenceTags":["补水","抗老"]}'
+# 期望: 返回更新后的 User(preferenceTags 存为 JSONB)
+```
+
+**步骤 5:地址簿 CRUD**
+
+```bash
+# 添加地址
+curl -s -X POST http://localhost:8081/api/address/add \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"receiverName":"张三","phone":"13800138000","province":"广东","city":"深圳","district":"南山","detail":"科兴路 1 号","isDefault":1}'
+
+# 列表
+curl -s http://localhost:8081/api/address/list -H "Authorization: Bearer $TOKEN"
+
+# 设默认(将 id=1 设为默认)
+curl -s -X PUT "http://localhost:8081/api/address/setDefault?id=1" -H "Authorization: Bearer $TOKEN"
+
+# 删除
+curl -s -X DELETE "http://localhost:8081/api/address/delete?id=1" -H "Authorization: Bearer $TOKEN"
+```
+
+**步骤 6:浏览历史**
+
+```bash
+# 上报一条(product-service 未落地,productId 用假数据)
+curl -s -X POST http://localhost:8081/api/user/browse-history \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"productId":100,"source":"详情页","durationSec":30}'
+
+# 列表(骨架期 productName/image/price 为空,后续 Feign 补齐)
+curl -s http://localhost:8081/api/user/browse-history -H "Authorization: Bearer $TOKEN"
+
+# 删除(替换 {historyId} 为实际 id)
+curl -s -X DELETE http://localhost:8081/api/user/browse-history/1 -H "Authorization: Bearer $TOKEN"
+```
+
+**步骤 7:商品收藏**
+
+```bash
+# 添加(幂等)
+curl -s -X POST http://localhost:8081/api/user/favorites/100 -H "Authorization: Bearer $TOKEN"
+
+# 列表
+curl -s http://localhost:8081/api/user/favorites -H "Authorization: Bearer $TOKEN"
+
+# 取消
+curl -s -X DELETE http://localhost:8081/api/user/favorites/100 -H "Authorization: Bearer $TOKEN"
+```
+
+**步骤 8:异常路径**
+
+```bash
+# 无 token 访问受保护接口 -> 期望 UNAUTHORIZED
+curl -s http://localhost:8081/api/auth/profile
+# 期望: {"code":10002,"message":"未登录或登录已过期","data":null}
+
+# 手机号格式错 -> 期望 20001
+curl -s -X POST "http://localhost:8081/api/auth/sendCode?phone=12345"
+# 期望: {"code":20001,"message":"手机号格式错误","data":null}
+
+# 验证码错误 -> 期望 20004
+curl -s -X POST http://localhost:8081/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"13800138000","code":"000000"}'
+# 期望: {"code":20004,"message":"验证码错误","data":null}
+```
+
+### 直接从 PG 验数据
+
+```bash
+docker exec -it welove-shop-postgres psql -U root -d welove_shop_search \
+  -c "SET search_path TO user_svc; SELECT id, username, phone, gender, skin_type, preference_tags FROM users;"
+```
+
+期望能看到刚才注册/更新的用户,`preference_tags` 显示为 JSON 数组。
