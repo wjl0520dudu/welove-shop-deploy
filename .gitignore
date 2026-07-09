@@ -173,7 +173,12 @@ admin-bff/target/
 #   - backend/pom.xml     : 单体 Maven 配置(微服务用父 POM,不需要)
 # 商品图片走对象存储/CDN,本地 images 目录始终不入库
 /backend/db/data/ecommerce_agent_dataset/*/images/
-/backend/db/
+# backend/db/ 下的旧单体资源不入库,但 scripts/ 微服务迁移脚本入库
+/backend/db/data/
+/backend/db/*.sql
+/backend/db/*.json
+/backend/db/*.py
+/backend/db/*.md
 /backend/welove-shop/
 /backend/ai-service/
 /backend/pom.xml

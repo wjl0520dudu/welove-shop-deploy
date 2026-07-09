@@ -17,7 +17,7 @@ CREATE TABLE category (
     description VARCHAR(500),
     icon_url    VARCHAR(500),
     sort_order  INTEGER DEFAULT 0,
-    is_active   BOOLEAN DEFAULT TRUE,
+    is_active   SMALLINT DEFAULT 1,               -- 1=启用, 0=禁用(与 monolith TINYINT(1) 对齐)
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -68,7 +68,7 @@ CREATE TABLE product_sku (
     properties  JSONB,                             -- {"容量":"30ml"} 等
     price       NUMERIC(10, 2) NOT NULL,
     stock       INTEGER DEFAULT 999,
-    is_default  BOOLEAN DEFAULT FALSE,
+    is_default  SMALLINT DEFAULT 0,                -- 1=默认规格, 0=非默认
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -112,7 +112,7 @@ CREATE TABLE product_review (
     nickname     VARCHAR(50) DEFAULT '匿名用户',
     rating       SMALLINT NOT NULL,               -- 1-5 星
     content      TEXT NOT NULL,
-    is_anonymous BOOLEAN DEFAULT FALSE,
+    is_anonymous SMALLINT DEFAULT 0,               -- 1=匿名, 0=非匿名
     create_time  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -133,7 +133,7 @@ CREATE TABLE recommendation_log (
     recommended_product_ids JSONB,                -- List<Long>
     recommend_reason        TEXT,
     agent_reasoning         TEXT,
-    user_clicked            BOOLEAN DEFAULT FALSE,
+    user_clicked            SMALLINT DEFAULT 0,   -- 1=点击, 0=未点击
     user_feedback           SMALLINT,             -- 1=满意, 0=不满意
     create_time             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
