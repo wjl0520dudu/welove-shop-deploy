@@ -21,11 +21,21 @@
             <groupId>com.welove.shop</groupId>
             <artifactId>common-core</artifactId>
         </dependency>
+
+        <!-- MyBatis-Plus for SpringBoot 3 -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- 分页插件 3.5.7 起需要单独引 jsqlparser -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- PG 驱动 -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
