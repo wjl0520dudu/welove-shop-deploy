@@ -23,6 +23,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     /** 免鉴权路径。 */
     private static final List<String> WHITELIST = List.of(
+            "/api/internal/**",       // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );
