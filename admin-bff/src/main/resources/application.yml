@@ -1,5 +1,9 @@
 # =====================================================================
-# admin-bff 配置(Ph3:接入 Nacos discovery)
+# admin-bff 配置(feat/ms-admin)
+# 端口:8090
+# 数据库:PostgreSQL / schema=admin_svc(仅存 admin 账号)
+# 注册中心:Nacos
+# 特点:BFF 聚合层,业务数据通过 Feign 调 4 个微服务
 # =====================================================================
 server:
   port: 8090
@@ -7,6 +11,7 @@ server:
 spring:
   application:
     name: admin-bff
+
   cloud:
     nacos:
       discovery:
@@ -16,13 +21,55 @@ spring:
         namespace: public
       config:
         import-check:
-          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+          enabled: false
+
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/welove_shop_search?currentSchema=admin_svc&stringtype=unspecified
+    username: root
+    password: 12345678
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: admin-bff-hikari
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    default-schema: admin_svc
+    schemas: admin_svc
+    locations: classpath:db/migration
+
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# JWT(与其他服务共享密钥)
+jwt:
+  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
+  expiration: ${JWT_EXPIRATION:3600000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}
+  header: Authorization
+  prefix: "Bearer "
+
+# Feign
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 3000
+        readTimeout: 5000
+        loggerLevel: BASIC
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,env
   endpoint:
     health:
       show-details: always
