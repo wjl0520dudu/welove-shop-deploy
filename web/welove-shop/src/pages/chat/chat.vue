@@ -626,7 +626,7 @@ export default {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16rpx 22rpx;
+  padding: calc(16rpx + env(safe-area-inset-top)) 22rpx 16rpx;
   background: rgba(244, 248, 248, 0.94);
   backdrop-filter: blur(8px);
 }

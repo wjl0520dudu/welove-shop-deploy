@@ -10,7 +10,8 @@
     {
       "path": "pages/chat/chat",
       "style": {
-        "navigationBarTitleText": "对话"
+        "navigationBarTitleText": "对话",
+        "navigationStyle": "custom"
       }
     },
     {
@@ -161,7 +162,7 @@
   },
   "globalStyle": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "ShopAgent-X",
+    "navigationBarTitleText": "WeLoveShop",
     "navigationBarBackgroundColor": "#ffffff",
     "backgroundColor": "#f6f7f9"
   },
