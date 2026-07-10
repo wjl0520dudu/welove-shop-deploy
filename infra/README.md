@@ -1,4 +1,4 @@
-# 基础设施速查表(backend/)
+# 基础设施速查表(infra/)
 
 本目录存放**本地开发用的中间件 docker-compose**。生产部署另有方案,不在本文档范围。
 
@@ -36,7 +36,7 @@
 ## 全部起来(按依赖顺序)
 
 ```bash
-cd backend
+cd infra
 
 # 1. 数据层(MySQL + Redis + PG)
 docker compose -f docker-compose.yml up -d
@@ -123,14 +123,14 @@ docker compose -f nacos-standalone-docker-compose.yml down -v
 | `backend_rmq_broker_logs` | RocketMQ Broker | 日志 |
 | `backend_rmq_broker_store` | RocketMQ Broker | 消息存储 |
 
-Milvus 三兄弟(etcd/minio/milvus)用的是 bind mount 到 `backend/volumes/`,不是 named volume。
+Milvus 三兄弟(etcd/minio/milvus)用的是 bind mount 到 `infra/volumes/`,不是 named volume。
 
 ---
 
 ## 常见问题
 
 **Q: RocketMQ 客户端在 IDEA 里连不上 broker?**
-A: 检查 `backend/rocketmq/conf/broker.conf` 里 `brokerIP1`:
+A: 检查 `infra/rocketmq/conf/broker.conf` 里 `brokerIP1`:
 - Windows/Mac Docker Desktop → 保持 `host.docker.internal`
 - Linux → 改成宿主机实际 IP(如 `192.168.1.100`)
 

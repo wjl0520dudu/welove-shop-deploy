@@ -14,7 +14,7 @@
 
     <artifactId>product-service</artifactId>
     <name>product-service</name>
-    <description>商品服务:商品/SKU/分类/FAQ/图片/评论、搜索(RAG)、知识库</description>
+    <description>商品服务:商品/SKU/分类/FAQ/图片/评论、推荐日志、搜索(LIKE MVP + 后续 RAG)</description>
 
     <dependencies>
         <dependency>
@@ -38,6 +38,7 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
+        <!-- 内部通用模块 -->
         <dependency>
             <groupId>com.welove.shop</groupId>
             <artifactId>common-db</artifactId>
@@ -49,6 +50,46 @@
         <dependency>
             <groupId>com.welove.shop</groupId>
             <artifactId>common-security</artifactId>
+        </dependency>
+
+        <!-- MyBatis-Plus starter -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+        </dependency>
+
+        <!-- PostgreSQL -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+
+        <!-- Flyway -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- Redis(商品详情/分类列表/热门商品缓存) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- 参数校验 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Hutool(搜索同义词、字符串工具) -->
+        <dependency>
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-all</artifactId>
         </dependency>
     </dependencies>
 
