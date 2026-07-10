@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.welove.shop.common.core.exception.BizException;
+import com.welove.shop.product.cache.ProductCache;
 import com.welove.shop.product.entity.Product;
 import com.welove.shop.product.exception.ProductErrorCode;
 import com.welove.shop.product.mapper.ProductMapper;
@@ -38,6 +39,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductImageService imageService;
     private final ProductFaqService faqService;
     private final ProductReviewService reviewService;
+    private final ProductCache cache;
 
     // ---------- 列表 ----------
 
@@ -75,6 +77,10 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public ProductDetailVO getDetail(Long id) {
+        ProductDetailVO cached = cache.getDetail(id);
+        if (cached != null) {
+            return cached;
+        }
         Product product = getById(id);
         ProductDetailVO vo = new ProductDetailVO();
         vo.setProduct(product);
@@ -82,6 +88,7 @@ public class ProductServiceImpl implements ProductService {
         vo.setImages(imageService.listByProductId(id));
         vo.setFaqs(faqService.listByProductId(id));
         vo.setReviews(reviewService.listByProductId(id, 10));
+        cache.putDetail(id, vo);
         return vo;
     }
 
@@ -172,10 +179,16 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public List<Product> getHotProducts(int limit) {
-        return productMapper.selectList(
+        List<Product> cached = cache.getHot(limit);
+        if (cached != null) {
+            return cached;
+        }
+        List<Product> fresh = productMapper.selectList(
                 new LambdaQueryWrapper<Product>()
                         .eq(Product::getStatus, 1)
                         .orderByDesc(Product::getSalesCount)
                         .last("LIMIT " + limit));
+        cache.putHot(limit, fresh);
+        return fresh;
     }
 }

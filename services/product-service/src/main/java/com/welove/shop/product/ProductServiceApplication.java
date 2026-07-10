@@ -1,8 +1,10 @@
 package com.welove.shop.product;
 
+import com.welove.shop.product.config.ProductCacheProperties;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 
@@ -14,6 +16,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 @EnableDiscoveryClient
 @EnableFeignClients
 @SpringBootApplication
+@EnableConfigurationProperties(ProductCacheProperties.class)
 @MapperScan("com.welove.shop.product.mapper")
 public class ProductServiceApplication {
 

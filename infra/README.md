@@ -359,3 +359,152 @@ docker exec -it welove-shop-postgres psql -U root -d welove_shop_search \
 ```
 
 期望能看到刚才注册/更新的用户,`preference_tags` 显示为 JSON 数组。
+
+---
+
+## product-service 全链路验证(feat/ms-product)
+
+**前置条件:**
+1. Docker 中间件已启动:PostgreSQL(5432) + Redis(6379) + Nacos(8848)
+2. Nacos 控制台可登录 http://localhost:8848/nacos(nacos/nacos)
+
+### 启动 product-service
+
+VSCode Spring Boot Dashboard 里点 `product-service` 的 ▶️,或命令行:
+
+```bash
+mvn -pl services/product-service spring-boot:run
+```
+
+**首次启动会:**
+- Flyway V1 创建 `product_svc` schema + 7 张表
+- Flyway V2 导入 100 商品 + 4 分类 + 585 SKU + 100 图片 + 439 FAQ + 453 评论
+- 注册到 Nacos(可在控制台 `服务管理 → 服务列表` 看到 product-service)
+
+### curl 全链路验证
+
+**步骤 1:分类列表**(匿名访问)
+
+```bash
+curl -s http://localhost:8082/api/category/list
+# 期望: 返回 4 个分类,美妆护肤/数码电子/服饰运动/食品生活
+```
+
+**步骤 2:商品列表分页**
+
+```bash
+# 全部商品第 1 页 20 条(默认按销量倒序)
+curl -s "http://localhost:8082/api/product/list?page=1&size=20"
+
+# 美妆护肤(categoryId=1),按价格升序
+curl -s "http://localhost:8082/api/product/list?categoryId=1&page=1&size=10&sortBy=price&sortOrder=asc"
+
+# 期望 records 里包含商品,total=100(全部)或 25(单分类)
+```
+
+**步骤 3:关键词搜索**
+
+```bash
+# 原词
+curl -s "http://localhost:8082/api/product/search?keyword=雅诗兰黛&limit=5"
+
+# 同义词扩展(护肤 -> 精华/面霜/乳液/爽肤水/面膜/眼霜)
+curl -s "http://localhost:8082/api/product/search?keyword=护肤&limit=5"
+
+# 期望返回多个匹配商品
+```
+
+**步骤 4:热门商品**(第一次调用会击穿到 DB,后续 60s 内走 Redis 缓存)
+
+```bash
+curl -s "http://localhost:8082/api/product/hot?limit=5"
+
+# 看 Redis 缓存是否命中
+docker exec welove-shop-redis redis-cli KEYS 'product:*'
+# 期望看到 product:hot:5
+```
+
+**步骤 5:商品详情(聚合)**
+
+```bash
+curl -s http://localhost:8082/api/product/1
+# 期望: data 包含 product/skus(3 条)/images/faqs/reviews(前 10)
+
+# 再次调用 —— Redis 命中,速度更快
+curl -s http://localhost:8082/api/product/1
+
+# Redis 里能看到 product:detail:1
+docker exec welove-shop-redis redis-cli KEYS 'product:detail:*'
+```
+
+**步骤 6:商品资源分开查**
+
+```bash
+curl -s http://localhost:8082/api/product/1/skus
+curl -s http://localhost:8082/api/product/1/images
+curl -s http://localhost:8082/api/product/1/faqs
+```
+
+**步骤 7:提交评价(需登录 token)**
+
+先从 user-service 拿一个 token(参考上面 user-service 验证步骤 1-2)。
+
+```bash
+export TOKEN='<user-service 拿到的 token>'
+curl -s -X POST http://localhost:8082/api/product/1/reviews \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"nickname":"tester","rating":5,"content":"very good","isAnonymous":0}'
+# 期望 code=0,返回带 id 的评价
+```
+
+**步骤 8:异常路径**
+
+```bash
+# 无 token 提交评价 -> 401 (UNAUTHORIZED)
+curl -s -X POST http://localhost:8082/api/product/1/reviews \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"anon","rating":5,"content":"test"}'
+# 期望 code=10002
+
+# 商品不存在
+curl -s http://localhost:8082/api/product/999999
+# 期望 code=30001, message=商品不存在
+
+# rating 超范围
+curl -s -X POST http://localhost:8082/api/product/1/reviews \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"rating":10,"content":"test"}'
+# 期望 code=30101, message=评分必须在 1-5 之间
+```
+
+### 直接从 PG 验数据
+
+```bash
+docker exec welove-shop-postgres psql -U root -d welove_shop_search -c "
+SET search_path TO product_svc;
+SELECT 'category' AS tbl, COUNT(*) FROM category
+UNION ALL SELECT 'product',       COUNT(*) FROM product
+UNION ALL SELECT 'product_sku',   COUNT(*) FROM product_sku
+UNION ALL SELECT 'product_image', COUNT(*) FROM product_image
+UNION ALL SELECT 'product_faq',   COUNT(*) FROM product_faq
+UNION ALL SELECT 'product_review', COUNT(*) FROM product_review;
+"
+```
+
+期望:category 4 / product 100 / product_sku 585 / product_image 100 / product_faq 439 / product_review 453。
+
+### 直接看 Redis 缓存
+
+```bash
+# 所有 product 缓存 key
+docker exec welove-shop-redis redis-cli KEYS 'product:*'
+
+# 看某 key TTL 剩余秒数
+docker exec welove-shop-redis redis-cli TTL 'product:detail:1'
+
+# 手动清空(排查用)
+docker exec welove-shop-redis redis-cli --scan --pattern 'product:*' | \
+  xargs -I{} docker exec welove-shop-redis redis-cli DEL {}
+```
