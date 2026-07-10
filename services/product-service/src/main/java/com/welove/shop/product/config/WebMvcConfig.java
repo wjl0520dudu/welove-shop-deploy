@@ -41,6 +41,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/api/product/*/skus",
             "/api/product/*/images",
             "/api/product/*/faqs",
+            "/api/internal/**",            // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );

@@ -17,6 +17,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     private static final List<String> WHITELIST = List.of(
             "/api/notice/latest",
+            "/api/internal/**",    // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );
