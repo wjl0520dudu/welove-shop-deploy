@@ -109,6 +109,11 @@ export default {
     },
     goAfterLogin() {
       const target = this.redirect || '/pages/product-list/product-list'
+      // 首次登录（画像为空）先引导完善用户画像
+      if (this.needsProfileSetup()) {
+        uni.redirectTo({ url: `/pages/profile-setup/profile-setup?redirect=${encodeURIComponent(target)}` })
+        return
+      }
       const tabPages = ['/pages/chat/chat', '/pages/product-list/product-list', '/pages/cart/cart', '/pages/profile/profile']
       const targetPath = target.split('?')[0]
       if (tabPages.includes(targetPath)) {
@@ -116,6 +121,12 @@ export default {
       } else {
         uni.redirectTo({ url: target })
       }
+    },
+    needsProfileSetup() {
+      const u = userStore.state.user || {}
+      const noGender = u.gender === null || u.gender === undefined
+      const noTags = !Array.isArray(u.preferenceTags) || !u.preferenceTags.length
+      return noGender && !u.ageRange && !u.skinType && noTags
     },
     async verifyCode() {
       if (this.loading || this.code.length !== 6) return
