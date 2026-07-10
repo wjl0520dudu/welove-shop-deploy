@@ -1,5 +1,7 @@
 import { login as loginApi, getProfile } from '../api/auth'
 import { clearAuth, getRefreshToken, getStoredUser, getToken, setRefreshToken, setStoredUser, setToken } from '../utils/auth'
+import chatStore from './chat'
+import cartStore from './cart'
 
 const state = {
   token: '',
@@ -46,5 +48,7 @@ export default {
     state.refreshToken = ''
     state.user = null
     clearAuth()
+    chatStore.reset()
+    cartStore.reset()
   }
 }
