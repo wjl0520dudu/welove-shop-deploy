@@ -1,4 +1,4 @@
-# backend/db/scripts
+# db/scripts
 
 微服务阶段一次性的数据迁移辅助脚本。
 
@@ -11,13 +11,13 @@
 **运行:**
 
 ```bash
-python backend/db/scripts/export_seed.py <output.sql>
+python db/scripts/export_seed.py <output.sql>
 ```
 
 例如生成到 product-service 的 Flyway 目录:
 
 ```bash
-python backend/db/scripts/export_seed.py \
+python db/scripts/export_seed.py \
   services/product-service/src/main/resources/db/migration/V2__seed_products.sql
 ```
 
