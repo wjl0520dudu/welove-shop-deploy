@@ -1,7 +1,7 @@
 <template>
   <view class="product-card" @tap="$emit('click')">
     <view class="image-wrap">
-      <image v-if="imageUrl && !imageFailed" class="image" :src="imageUrl" mode="aspectFill" @error="imageFailed = true" />
+      <image v-if="imageUrl && !imageFailed" class="image" :class="{ loaded }" :src="imageUrl" mode="aspectFill" @load="loaded = true" @error="imageFailed = true" />
       <view v-else class="image placeholder">
         <uni-icons type="image" size="28" color="#98a2b3" />
       </view>
@@ -36,10 +36,10 @@ export default {
   },
   emits: ['click', 'favorite'],
   data() {
-    return { imageFailed: false }
+    return { imageFailed: false, loaded: false }
   },
   watch: {
-    product() { this.imageFailed = false }
+    product() { this.imageFailed = false; this.loaded = false }
   },
   computed: {
     imageUrl() {
@@ -64,6 +64,11 @@ export default {
   border-radius: 22rpx;
   background: #ffffff;
   box-shadow: 0 12rpx 30rpx rgba(15, 118, 110, 0.08);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.product-card:active {
+  transform: scale(0.97);
+  box-shadow: 0 6rpx 18rpx rgba(15, 118, 110, 0.1);
 }
 .image-wrap {
   position: relative;
@@ -72,6 +77,14 @@ export default {
   width: 100%;
   height: 320rpx;
   background: #eef6f5;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.image.loaded {
+  opacity: 1;
+}
+.image.placeholder {
+  opacity: 1;
 }
 .placeholder {
   display: flex;
