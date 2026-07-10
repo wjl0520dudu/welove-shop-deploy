@@ -1,5 +1,9 @@
 # =====================================================================
-# trade-service 配置(Ph3:接入 Nacos discovery)
+# trade-service 配置(feat/ms-trade)
+# 端口:8083
+# 数据库:PostgreSQL @ localhost:5432 / welove_shop_search / schema=trade_svc
+# 注册中心:Nacos @ localhost:8848
+# 跨服务:Feign 调 product-service + user-service
 # =====================================================================
 server:
   port: 8083
@@ -7,6 +11,8 @@ server:
 spring:
   application:
     name: trade-service
+
+  # ---------- Nacos ----------
   cloud:
     nacos:
       discovery:
@@ -16,13 +22,74 @@ spring:
         namespace: public
       config:
         import-check:
-          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+          enabled: false                         # 骨架期不接 Nacos config
 
+  # ---------- PostgreSQL ----------
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/welove_shop_search?currentSchema=trade_svc&stringtype=unspecified
+    username: root
+    password: 12345678
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: trade-svc-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ---------- Flyway ----------
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    default-schema: trade_svc
+    schemas: trade_svc
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+# ---------- MyBatis-Plus ----------
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto                              # 与 PG IDENTITY 对齐
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl   # 开发期打印 SQL
+
+# ---------- JWT(与 user/product 共享密钥,跨服务 token 通用) ----------
+jwt:
+  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
+  expiration: ${JWT_EXPIRATION:3600000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}
+  header: Authorization
+  prefix: "Bearer "
+
+# ---------- Feign 客户端(超时 + 日志) ----------
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 3000
+        readTimeout: 5000
+        loggerLevel: BASIC
+  compression:
+    request:
+      enabled: true
+    response:
+      enabled: true
+
+# ---------- 业务开关 ----------
+trade-service:
+  order:
+    pay-timeout-minutes: 10                     # 订单超时未支付分钟数(与 monolith 一致)
+    timeout-scan-cron: "0 * * * * ?"            # 定时扫描 cron:每分钟第 0 秒
+
+# ---------- 管理端点 ----------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,env
   endpoint:
     health:
       show-details: always
