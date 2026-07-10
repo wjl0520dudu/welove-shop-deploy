@@ -508,3 +508,114 @@ docker exec welove-shop-redis redis-cli TTL 'product:detail:1'
 docker exec welove-shop-redis redis-cli --scan --pattern 'product:*' | \
   xargs -I{} docker exec welove-shop-redis redis-cli DEL {}
 ```
+
+---
+
+## Gateway 显式路由 + 分层鉴权(feat/ms-gateway)
+
+**前置:** Nacos + PG + Redis 三个中间件在跑,6 个微服务全部启动(gateway + user + product + trade + chat + admin-bff)。
+
+### 路由前缀映射表
+
+Gateway 使用显式路由 + `StripPrefix=1`,把外部路径的第一段(服务名)剥掉后转发到对应服务:
+
+| Gateway 入口 | 转发目标 |
+|-------------|---------|
+| `POST /user/api/auth/login` | `user-service :8081` `/api/auth/login` |
+| `GET  /user/api/auth/profile` | `user-service :8081` `/api/auth/profile` |
+| `GET  /product/api/product/list` | `product-service :8082` `/api/product/list` |
+| `GET  /product/api/category/list` | `product-service :8082` `/api/category/list` |
+| `POST /trade/api/order/create` | `trade-service :8083` `/api/order/create` |
+| `GET  /chat/api/chat/conversations` | `chat-service :8084` `/api/chat/conversations` |
+| `POST /admin/api/admin/login` | `admin-bff :8090` `/api/admin/login` |
+| `GET  /admin/api/admin/dashboard/stats` | `admin-bff :8090` `/api/admin/dashboard/stats` |
+
+### 分层鉴权设计
+
+**架构:** Gateway 主鉴权 + 下游 JwtInterceptor 兜底 = 双重保险,零信任。
+
+1. Gateway `JwtAuthGlobalFilter`(order=-100)校验 JWT 签名+过期
+2. 白名单(`gateway-auth.whitelist`)命中直接放行
+3. 校验通过后塞 request header 透传下游:
+   - `X-User-Id` = claims.subject
+   - `X-Username` = claims.username
+   - `X-Role` = claims.role
+4. 下游服务的 `JwtInterceptor` 仍从 `Authorization` 解析(骨架期不改),网关塞头为未来分层做准备
+
+### 5 步 curl 验证
+
+**步骤 1:未登录访问受保护接口 → 401**
+
+```bash
+curl -s http://localhost:8080/user/api/auth/profile
+# 期望: {"code":10002,"message":"缺少 Authorization Bearer token",...}
+```
+
+**步骤 2:通过 gateway 登录拿 token**
+
+```bash
+# 发验证码(user-service 控制台会打印)
+curl -s -X POST "http://localhost:8080/user/api/auth/sendCode?phone=13800138000"
+
+# 从 Redis 拿验证码
+CODE=$(docker exec welove-shop-redis redis-cli GET "sms:code:13800138000")
+
+# 登录
+LOGIN=$(curl -s -X POST http://localhost:8080/user/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"phone\":\"13800138000\",\"code\":\"$CODE\"}")
+TOKEN=$(echo "$LOGIN" | grep -oE '"token":"[^"]+"' | head -1 | sed 's/"token":"//' | sed 's/"$//')
+```
+
+**步骤 3:带 token 访问受保护接口 → 200**
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/user/api/auth/profile
+# 期望: {"code":0,"message":"success","data":{...}}
+```
+
+**步骤 4:商品接口白名单免鉴权**
+
+```bash
+curl -s "http://localhost:8080/product/api/product/list?page=1&size=3"
+# 期望: 直接返回 3 个商品,不用 token
+```
+
+**步骤 5:Admin 登录 + Dashboard(role=ADMIN 双重校验)**
+
+```bash
+# Admin 登录(gateway 白名单)
+ADMIN_LOGIN=$(curl -s -X POST http://localhost:8080/admin/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}')
+ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | grep -oE '"accessToken":"[^"]+"' | head -1 | \
+  sed 's/"accessToken":"//' | sed 's/"$//')
+
+# Dashboard(gateway JWT 校验通过,admin-bff 内部 AdminInterceptor 二次校验 role=ADMIN)
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:8080/admin/api/admin/dashboard/stats
+# 期望: {"code":0,"data":{"userCount":..,"productCount":100,"orderCount":..,"conversationCount":..,"todayRevenue":..}}
+
+# 拿普通用户 token 访问 admin(应被 admin-bff 内部拦下)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/admin/api/admin/dashboard/stats
+# 期望: {"code":60003,"message":"非管理员 token",...}
+```
+
+### 常见问题
+
+**Q: 访问 /user/api/xxx 返回 503?**
+A: user-service 未起或未注册到 Nacos。`docker ps` 看 Nacos,浏览器打开 `http://localhost:8848/nacos` 检查服务列表。gateway 全局错误处理器会把 `NotFoundException` 转成 503+"下游服务不可用"。
+
+**Q: 明明有 token 但 401?**
+A:
+1. Header 格式:`Authorization: Bearer <token>`(注意 `Bearer ` 后有空格)
+2. token 过期(默认 1 小时)
+3. 各服务 `jwt.secret` 是否一致(骨架期都用父 POM 默认值)
+
+**Q: 前端 CORS 报错?**
+A: Gateway 已配全局 CORS(`allowedOriginPatterns=*` + `allowCredentials=true`)。检查请求 origin,浏览器 Network 面板看响应是否带 `Access-Control-Allow-Origin`。
+
+**Q: 想看 gateway 加载了哪些路由?**
+A: `curl http://localhost:8080/actuator/gateway/routes` 列出所有路由规则。
