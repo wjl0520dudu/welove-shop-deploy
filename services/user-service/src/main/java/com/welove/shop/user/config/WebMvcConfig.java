@@ -26,6 +26,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/api/auth/sendCode",
             "/api/auth/login",
             "/api/auth/refresh",
+            "/api/internal/**",          // 服务间 Feign 调用(骨架期免登录,Ph 后期与 Gateway 分层鉴权收窄)
             "/actuator/**",
             "/error"
     );
