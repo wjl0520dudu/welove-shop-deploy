@@ -32,7 +32,7 @@ import java.util.Map;
  * 账号密码 register / changePassword 骨架期不开放,与 monolith 一致。
  */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
 

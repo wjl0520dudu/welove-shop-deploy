@@ -21,7 +21,7 @@ import java.util.List;
  * 骨架期只返回 productId,不填充 Product 展示字段(TODO Ph 后续 Feign 补齐)。
  */
 @RestController
-@RequestMapping("/api/user/browse-history")
+@RequestMapping("/browse-history")
 @RequiredArgsConstructor
 public class UserBrowseHistoryController {
 

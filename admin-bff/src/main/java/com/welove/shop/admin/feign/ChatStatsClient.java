@@ -6,6 +6,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 
 @FeignClient(name = "chat-service", contextId = "chatStatsClient")
 public interface ChatStatsClient {
-    @GetMapping("/api/internal/conversation/count")
+    @GetMapping("/internal/conversation/count")
     Result<Long> count();
 }

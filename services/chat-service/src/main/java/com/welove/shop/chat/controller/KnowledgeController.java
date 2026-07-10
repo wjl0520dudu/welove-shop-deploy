@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/knowledge")
+@RequestMapping("/knowledge")
 @RequiredArgsConstructor
 public class KnowledgeController {
     private final KnowledgeService knowledgeService;

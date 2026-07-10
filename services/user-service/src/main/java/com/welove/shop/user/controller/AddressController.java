@@ -22,7 +22,7 @@ import java.util.List;
  * userId 全部从 {@link UserContext} 取,拒绝请求体中的越权写入。
  */
 @RestController
-@RequestMapping("/api/address")
+@RequestMapping("/address")
 @RequiredArgsConstructor
 public class AddressController {
 

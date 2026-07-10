@@ -13,7 +13,7 @@ import java.util.List;
 /**
  * trade-service Web 配置:注册 JWT 拦截器 + 白名单。
  * <p>
- * 交易域全部需登录 —— 白名单只留 actuator + error。
+ * 交易域全部需登录 —— 白名单只留 actuator + error(网关 StripPrefix=2 后收到的路径,无 /api 前缀)。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -23,7 +23,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     /** 免鉴权路径。 */
     private static final List<String> WHITELIST = List.of(
-            "/api/internal/**",       // 内部统计接口(admin-bff Dashboard Feign 调)
+            "/internal/**",       // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );
@@ -37,7 +37,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         JwtInterceptor interceptor = new JwtInterceptor(jwtUtil, jwtProperties.getHeader(), WHITELIST);
         registry.addInterceptor(interceptor)
-                .addPathPatterns("/api/**")
+                .addPathPatterns("/**")
                 .excludePathPatterns(WHITELIST);
     }
 }

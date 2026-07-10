@@ -15,6 +15,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 public interface UserClient {
 
     /** 内部接口:按 ID 查地址(不校验归属,免登录,只允许集群内 Feign 调用)。 */
-    @GetMapping("/api/internal/address/{id}")
+    @GetMapping("/internal/address/{id}")
     Result<AddressDTO> getAddress(@PathVariable Long id);
 }

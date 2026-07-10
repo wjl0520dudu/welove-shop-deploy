@@ -21,7 +21,7 @@ import java.util.List;
  * 所有接口需登录(userId 从 UserContext 拿)。
  */
 @RestController
-@RequestMapping("/api/cart")
+@RequestMapping("/cart")
 @RequiredArgsConstructor
 public class CartController {
 

@@ -70,9 +70,10 @@ env/
 ENV/
 .python-version
 
-# -------- Node / 前端(未来接入前端时会用到) --------
+# -------- Node / 前端(uni-app + H5) --------
 node_modules/
 dist/
+unpackage/
 .next/
 .nuxt/
 .parcel-cache/

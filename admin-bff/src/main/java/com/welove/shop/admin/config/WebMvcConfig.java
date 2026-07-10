@@ -11,9 +11,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.util.List;
 
 /**
- * admin-bff Web 配置:注册 AdminInterceptor + 白名单。
+ * admin-bff Web 配置:注册 AdminInterceptor + 白名单(网关 StripPrefix=2 后收到的路径,无 /api 前缀)。
  * <p>
- * 只有 role=ADMIN 的 token 才能访问 /api/admin/**。
+ * 只有 role=ADMIN 的 token 才能访问非白名单路径。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -23,7 +23,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     /** 免鉴权路径。 */
     private static final List<String> WHITELIST = List.of(
-            "/api/admin/login",
+            "/login",
             "/actuator/**",
             "/error"
     );
@@ -36,7 +36,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(new AdminInterceptor(jwtUtil, jwtProperties.getHeader(), WHITELIST))
-                .addPathPatterns("/api/**")
+                .addPathPatterns("/**")
                 .excludePathPatterns(WHITELIST);
     }
 }

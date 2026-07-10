@@ -13,7 +13,7 @@ import java.util.List;
 /**
  * user-service Web 配置:注册 JWT 拦截器 + 白名单。
  * <p>
- * 白名单命中的路径无需登录即可访问,其他所有 /api/** 必须携带有效 token。
+ * 白名单命中的路径无需登录即可访问,其他所有请求必须携带有效 token。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -21,12 +21,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
     private final JwtUtil jwtUtil;
     private final JwtProperties jwtProperties;
 
-    /** 免鉴权路径。 */
+    /** 免鉴权路径(网关 StripPrefix=2 后收到的路径,无 /api 前缀)。 */
     private static final List<String> WHITELIST = List.of(
-            "/api/auth/sendCode",
-            "/api/auth/login",
-            "/api/auth/refresh",
-            "/api/internal/**",          // 服务间 Feign 调用(骨架期免登录,Ph 后期与 Gateway 分层鉴权收窄)
+            "/auth/sendCode",
+            "/auth/login",
+            "/auth/refresh",
+            "/internal/**",          // 服务间 Feign 调用内核(Ph 后期与 Gateway 分层鉴权收窄)
             "/actuator/**",
             "/error"
     );
@@ -40,7 +40,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         JwtInterceptor interceptor = new JwtInterceptor(jwtUtil, jwtProperties.getHeader(), WHITELIST);
         registry.addInterceptor(interceptor)
-                .addPathPatterns("/api/**")
+                .addPathPatterns("/**")
                 .excludePathPatterns(WHITELIST);
     }
 }

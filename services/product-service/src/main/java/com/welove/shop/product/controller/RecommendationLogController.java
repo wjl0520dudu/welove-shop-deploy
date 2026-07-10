@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 全部需登录(userId 在日志体里由调用方传,前后端约定)。
  */
 @RestController
-@RequestMapping("/api/recommend-log")
+@RequestMapping("/recommend-log")
 @RequiredArgsConstructor
 public class RecommendationLogController {
 

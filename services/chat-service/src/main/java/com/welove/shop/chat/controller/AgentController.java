@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/agent")
+@RequestMapping("/agent")
 @RequiredArgsConstructor
 public class AgentController {
     private final AgentService agentService;

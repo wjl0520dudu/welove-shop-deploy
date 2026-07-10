@@ -18,7 +18,7 @@ spring:
         import-check:
           enabled: false
 
-    # ---------- 显式路由 ----------
+    # ---------- 显式路由(Plan A: /api 归属网关层) ----------
     gateway:
       discovery:
         locator:
@@ -27,37 +27,37 @@ spring:
         - id: user-service
           uri: lb://user-service
           predicates:
-            - Path=/user/**
+            - Path=/api/user/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2
 
         - id: product-service
           uri: lb://product-service
           predicates:
-            - Path=/product/**
+            - Path=/api/product/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2
 
         - id: trade-service
           uri: lb://trade-service
           predicates:
-            - Path=/trade/**
+            - Path=/api/trade/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2
 
         - id: chat-service
           uri: lb://chat-service
           predicates:
-            - Path=/chat/**
+            - Path=/api/chat/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2
 
         - id: admin-bff
           uri: lb://admin-bff
           predicates:
-            - Path=/admin/**
+            - Path=/api/admin/**
           filters:
-            - StripPrefix=1
+            - StripPrefix=2
 
       # ---------- 全局 CORS ----------
       globalcors:

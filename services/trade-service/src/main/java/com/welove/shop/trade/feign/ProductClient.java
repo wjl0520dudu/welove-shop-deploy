@@ -25,10 +25,10 @@ import java.util.List;
 public interface ProductClient {
 
     /** 批量按 ID 查商品(不聚合 sku/image/faq/review)。 */
-    @GetMapping("/api/product/batch")
+    @GetMapping("/product/batch")
     Result<List<ProductDTO>> batch(@RequestParam List<Long> ids);
 
     /** 批量按 ID 查 SKU。 */
-    @GetMapping("/api/product/sku/batch")
+    @GetMapping("/product/sku/batch")
     Result<List<ProductSkuDTO>> skuBatch(@RequestParam List<Long> ids);
 }
