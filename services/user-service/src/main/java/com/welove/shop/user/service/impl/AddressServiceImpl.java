@@ -81,4 +81,9 @@ public class AddressServiceImpl implements AddressService {
                         .eq(Address::getUserId, userId)
                         .eq(Address::getIsDefault, 1));
     }
+
+    @Override
+    public Address getById(Long id) {
+        return addressMapper.selectById(id);
+    }
 }

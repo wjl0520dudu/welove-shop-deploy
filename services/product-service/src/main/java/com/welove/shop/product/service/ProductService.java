@@ -25,4 +25,7 @@ public interface ProductService {
 
     /** 热门商品(按销量倒序)。 */
     List<Product> getHotProducts(int limit);
+
+    /** 批量按 ID 查商品(供其他服务通过 Feign 调用,不带聚合 sku/image/faq/review)。 */
+    List<Product> listByIds(List<Long> ids);
 }

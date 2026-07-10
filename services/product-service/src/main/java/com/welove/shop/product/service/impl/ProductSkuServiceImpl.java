@@ -27,4 +27,12 @@ public class ProductSkuServiceImpl implements ProductSkuService {
     public int updateStock(Long skuId, Integer quantity) {
         return skuMapper.updateStock(skuId, quantity);
     }
+
+    @Override
+    public List<ProductSku> listByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return skuMapper.selectByIds(ids);
+    }
 }

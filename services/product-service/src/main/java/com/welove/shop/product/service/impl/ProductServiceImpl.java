@@ -191,4 +191,14 @@ public class ProductServiceImpl implements ProductService {
         cache.putHot(limit, fresh);
         return fresh;
     }
+
+    // ---------- 批量查询(Feign 供 trade/chat 等下游服务用) ----------
+
+    @Override
+    public List<Product> listByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return productMapper.selectByIds(ids);
+    }
 }

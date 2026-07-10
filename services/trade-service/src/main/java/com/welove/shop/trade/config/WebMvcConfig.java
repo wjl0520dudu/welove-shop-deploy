@@ -1,4 +1,4 @@
-package com.welove.shop.product.config;
+package com.welove.shop.trade.config;
 
 import com.welove.shop.common.security.config.JwtProperties;
 import com.welove.shop.common.security.interceptor.JwtInterceptor;
@@ -11,10 +11,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.util.List;
 
 /**
- * product-service Web 配置:注册 JWT 拦截器 + 白名单。
+ * trade-service Web 配置:注册 JWT 拦截器 + 白名单。
  * <p>
- * 商品浏览类接口全匿名(list/search/hot/详情/skus/images/faqs/reviews GET),
- * 提交评价和推荐日志相关需登录。
+ * 交易域全部需登录 —— 白名单只留 actuator + error。
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -22,25 +21,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     private final JwtUtil jwtUtil;
     private final JwtProperties jwtProperties;
 
-    /**
-     * 免鉴权路径 —— 商品浏览类 GET 接口全匿名。
-     * <p>
-     * 提交评价 POST /api/product/{id}/reviews 不在白名单,拦截器解析 token 后由
-     * ProductResourceController.submitReview 校验 UserContext。
-     * 评价列表 GET 走 /api/product/{id} 详情聚合,不单独暴露。
-     * 推荐日志相关 /api/recommend-log/** 全部需登录,不在白名单。
-     */
+    /** 免鉴权路径。 */
     private static final List<String> WHITELIST = List.of(
-            "/api/category/**",
-            "/api/product/list",
-            "/api/product/search",
-            "/api/product/hot",
-            "/api/product/batch",          // 内部 Feign 批量查商品(骨架期免登录)
-            "/api/product/sku/batch",      // 内部 Feign 批量查 SKU(骨架期免登录)
-            "/api/product/*",              // /api/product/{id} 详情聚合(含 reviews)
-            "/api/product/*/skus",
-            "/api/product/*/images",
-            "/api/product/*/faqs",
             "/actuator/**",
             "/error"
     );
