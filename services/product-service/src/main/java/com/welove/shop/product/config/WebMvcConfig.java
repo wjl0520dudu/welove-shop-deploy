@@ -35,6 +35,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/api/product/list",
             "/api/product/search",
             "/api/product/hot",
+            "/api/product/batch",          // 内部 Feign 批量查商品(骨架期免登录)
+            "/api/product/sku/batch",      // 内部 Feign 批量查 SKU(骨架期免登录)
             "/api/product/*",              // /api/product/{id} 详情聚合(含 reviews)
             "/api/product/*/skus",
             "/api/product/*/images",

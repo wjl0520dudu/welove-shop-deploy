@@ -57,4 +57,18 @@ public class ProductController {
     public Result<ProductDetailVO> detail(@PathVariable Long id) {
         return Result.ok(productService.getDetail(id));
     }
+
+    /**
+     * 批量按 ID 查商品(不聚合 sku/image/faq/review)。
+     * <p>
+     * 供下游服务(trade/chat 等)通过 Feign 一次拿多个商品的基础字段(标题/图/价格/品牌)。
+     * <ul>
+     *   <li>{@code ids} 为空或无匹配返回空 list</li>
+     *   <li>不校验 status,允许查下架商品(订单历史需要显示已下架商品)</li>
+     * </ul>
+     */
+    @GetMapping("/batch")
+    public Result<List<Product>> batch(@RequestParam List<Long> ids) {
+        return Result.ok(productService.listByIds(ids));
+    }
 }

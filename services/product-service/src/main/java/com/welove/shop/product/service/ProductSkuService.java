@@ -14,4 +14,7 @@ public interface ProductSkuService {
 
     /** 库存加减(quantity 正加负减,原子操作)。 */
     int updateStock(Long skuId, Integer quantity);
+
+    /** 批量按 ID 查 SKU(Feign 供下游服务用,如 trade-service 下单查 SKU 价格/属性)。 */
+    List<ProductSku> listByIds(List<Long> ids);
 }

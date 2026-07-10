@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -48,6 +49,16 @@ public class ProductResourceController {
     @GetMapping("/{id}/skus")
     public Result<List<ProductSku>> skus(@PathVariable Long id) {
         return Result.ok(skuService.listByProductId(id));
+    }
+
+    /**
+     * 批量按 SKU ID 查(供 Feign 下游 trade-service 下单查 SKU 价格/属性)。
+     * <p>
+     * 路径避开 {@code /{id}/skus},用 /sku/batch 独立入口。
+     */
+    @GetMapping("/sku/batch")
+    public Result<List<ProductSku>> skuBatch(@RequestParam List<Long> ids) {
+        return Result.ok(skuService.listByIds(ids));
     }
 
     // ---------- 图片 ----------
