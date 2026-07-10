@@ -1,5 +1,9 @@
 # =====================================================================
-# chat-service 配置(Ph3:接入 Nacos discovery)
+# chat-service 配置(feat/ms-chat)
+# 端口:8084
+# 数据库:PostgreSQL / welove_shop_search / schema=chat_svc
+# 缓存:Redis @ 6379(对话上下文+消息去重)
+# AI:  Python ai-service @ ${AI_SERVICE_URL:http://127.0.0.1:8000/api}
 # =====================================================================
 server:
   port: 8084
@@ -7,6 +11,10 @@ server:
 spring:
   application:
     name: chat-service
+  main:
+    web-application-type: servlet            # 强制 Tomcat(引入 webflux 后防止 Netty 抢占)
+
+  # ---------- Nacos ----------
   cloud:
     nacos:
       discovery:
@@ -16,13 +24,84 @@ spring:
         namespace: public
       config:
         import-check:
-          enabled: false                         # Ph3 只接 discovery,Ph4 接 config 时删掉
+          enabled: false
 
+  # ---------- PostgreSQL ----------
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/welove_shop_search?currentSchema=chat_svc&stringtype=unspecified
+    username: root
+    password: 12345678
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: chat-svc-hikari
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ---------- Flyway ----------
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    default-schema: chat_svc
+    schemas: chat_svc
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  # ---------- Redis ----------
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+# ---------- MyBatis-Plus ----------
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# ---------- JWT(与 user/product/trade 共享密钥) ----------
+jwt:
+  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
+  expiration: ${JWT_EXPIRATION:3600000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}
+  header: Authorization
+  prefix: "Bearer "
+
+# ---------- Python AI 服务 ----------
+ai:
+  service:
+    url: ${AI_SERVICE_URL:http://127.0.0.1:8000/api}
+
+# ---------- 业务开关 ----------
+chat-service:
+  context:
+    # 短期记忆 Redis TTL(秒), 超过此时间的对话上下文从 DB 重建
+    redis-ttl-seconds: 1800
+    # 长期记忆滑动窗口(最近 N 条消息)
+    window-size: 10
+    # 去重窗口:同一会话 + 相同内容 在 N 秒内仅处理一次
+    dedup-window-seconds: 30
+  sse:
+    # SseEmitter 超时(毫秒)
+    timeout: 300000
+
+# ---------- 管理端点 ----------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,env
   endpoint:
     health:
       show-details: always
