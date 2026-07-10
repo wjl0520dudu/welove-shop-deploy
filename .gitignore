@@ -162,8 +162,9 @@ admin-bff/target/
 /infra/volumes/
 /infra/application-dev.yml
 
-# ai-service/ 目前仍是空壳(Python 代码后期正式入库),先忽略
-/ai-service/
+# ai-service/ 正式入库,仅排除临时调试文件
+/ai-service/tmp_debug/
+/ai-service/tt
 
 # 单体附带的第三方二进制/文档(如果本地还留着)
 /backend/
