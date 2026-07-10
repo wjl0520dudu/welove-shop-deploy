@@ -39,25 +39,16 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
         </dependency>
 
-        <!-- Sentinel 限流(骨架期只引 starter,不配规则) -->
+        <!-- Sentinel 限流骨架 -->
         <dependency>
             <groupId>com.alibaba.cloud</groupId>
             <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
         </dependency>
-        <dependency>
-            <groupId>com.alibaba.csp</groupId>
-            <artifactId>sentinel-spring-cloud-gateway-adapter</artifactId>
-        </dependency>
 
-        <!-- 内部通用模块 -->
+        <!-- 内部通用模块(仅 Result/ErrorCode,不碰 web/servlet) -->
         <dependency>
             <groupId>com.welove.shop</groupId>
             <artifactId>common-core</artifactId>
-        </dependency>
-        <!-- 分层鉴权:Gateway 侧 JWT 校验,复用 common-security 的 JwtUtil -->
-        <dependency>
-            <groupId>com.welove.shop</groupId>
-            <artifactId>common-security</artifactId>
         </dependency>
 
         <!-- Actuator(健康检查、指标) -->

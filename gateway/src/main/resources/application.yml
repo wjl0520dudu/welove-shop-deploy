@@ -1,7 +1,5 @@
 # =====================================================================
-# gateway 配置(feat/ms-gateway)
-# 端口:8080
-# 职责:统一入口 / 显式路由 / 分层鉴权(JWT + X-User-Id 透传)/ CORS / Sentinel 限流(骨架)
+# gateway 配置(显式路由 + CORS + Sentinel 骨架)
 # =====================================================================
 server:
   port: 8080
@@ -9,9 +7,6 @@ server:
 spring:
   application:
     name: gateway
-  main:
-    web-application-type: reactive              # 明确 Netty(响应式)
-
   cloud:
     nacos:
       discovery:
@@ -23,17 +18,18 @@ spring:
         import-check:
           enabled: false
 
+    # ---------- 显式路由 ----------
     gateway:
-      # ---------- 显式路由 ----------
-      # 路由前缀短化:/user/api/xxx → user-service:/api/xxx
-      # 使用 lb:// 前缀走 Spring Cloud LoadBalancer(必须引 spring-cloud-starter-loadbalancer)
+      discovery:
+        locator:
+          enabled: false                                # 关闭自动路由,全部显式声明
       routes:
         - id: user-service
           uri: lb://user-service
           predicates:
             - Path=/user/**
           filters:
-            - StripPrefix=1                     # 去掉 /user, 剩 /api/xxx
+            - StripPrefix=1
 
         - id: product-service
           uri: lb://product-service
@@ -63,54 +59,31 @@ spring:
           filters:
             - StripPrefix=1
 
-      # ---------- 服务发现自动路由(备用,不启用)----------
-      discovery:
-        locator:
-          enabled: false                        # 关掉,统一走上面显式路由
+      # ---------- 全局 CORS ----------
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
 
-# ---------- JWT(与其他服务共享密钥,校验签名用)----------
-jwt:
-  secret: ${JWT_SECRET:weloveShop-jwt-secret-key-must-be-at-least-32-characters-for-hs256-algorithm}
-  expiration: ${JWT_EXPIRATION:3600000}
-  refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400000}
-  header: Authorization
-  prefix: "Bearer "
+  # ---------- 非 WebFlux 环境不启 servlet ----------
+  main:
+    web-application-type: reactive
 
-# ---------- gateway 鉴权白名单 ----------
-gateway-auth:
-  # Ant 通配符,不带 /{service} 前缀:表示到达下游后的最终路径,
-  # 但 gateway 侧看到的是带前缀的路径,所以配置里必须写全带前缀的
-  whitelist:
-    - /user/api/auth/sendCode
-    - /user/api/auth/login
-    - /user/api/auth/refresh
-    - /user/api/internal/**                    # 内部服务间调用,不走用户 JWT
-    - /product/api/category/**
-    - /product/api/product/list
-    - /product/api/product/search
-    - /product/api/product/hot
-    - /product/api/product/batch
-    - /product/api/product/sku/batch
-    - /product/api/product/*
-    - /product/api/product/*/skus
-    - /product/api/product/*/images
-    - /product/api/product/*/faqs
-    - /product/api/internal/**
-    - /trade/api/internal/**
-    - /chat/api/notice/latest
-    - /chat/api/internal/**
-    - /admin/api/admin/login                    # admin 登录不用 token
-    - /actuator/**
-
-# ---------- Sentinel(骨架期不配规则,预留接入点)----------
-# Nacos 数据源方式:后续接入时把规则写到 Nacos 里,gateway 自动拉取
-# 现在只保证 starter 已装,启动不报错
+# ---------- Sentinel(骨架期不配规则,兜底流控留给后面) ----------
+sentinel:
+  transport:
+    dashboard: 127.0.0.1:8080                   # Sentinel 控制台(后序可改)
+  eager: true
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway            # gateway 端点:查路由/过滤器
+        include: health,info,gateway
   endpoint:
     health:
       show-details: always
