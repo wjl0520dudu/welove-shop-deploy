@@ -18,6 +18,8 @@
           :key="conv.id"
           class="conv-item"
           :class="{ active: String(conv.id) === String(currentId) }"
+          hover-class="conv-item--hover"
+          :hover-stay-time="80"
           @tap="$emit('select', conv)"
         >
           <uni-icons
@@ -127,18 +129,54 @@ export default {
   text-align: center;
 }
 .conv-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14rpx;
   margin-bottom: 12rpx;
   padding: 22rpx 20rpx;
-  border-radius: 18rpx;
+  overflow: hidden;
+  border-radius: 20rpx;
   background: #ffffff;
   box-shadow: 0 6rpx 16rpx rgba(15, 118, 110, 0.05);
+  transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease, color 0.22s ease;
 }
+/* hover 态：用 hover-class="conv-item--hover" 实现（小程序的 :hover 不稳） */
+.conv-item--hover {
+  background: #f0fdfa;
+  box-shadow: 0 10rpx 22rpx rgba(20, 184, 166, 0.16);
+  transform: translateX(4rpx);
+}
+.conv-item--hover::before {
+  content: '';
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: 0;
+  width: 6rpx;
+  border-radius: 0 6rpx 6rpx 0;
+  background: linear-gradient(180deg, #14b8a6, #5eead4);
+  opacity: 0.7;
+}
+.conv-item:active {
+  transform: scale(0.98);
+}
+/* 选中态：比 hover 更深、更稳定，有持续高亮 */
 .conv-item.active {
-  background: #ecfdf9;
-  box-shadow: 0 6rpx 18rpx rgba(20, 184, 166, 0.18);
+  background: linear-gradient(135deg, #ecfdf9 0%, #d1fae5 100%);
+  box-shadow: 0 12rpx 28rpx rgba(20, 184, 166, 0.26);
+  transform: translateX(4rpx);
+}
+.conv-item.active::before {
+  content: '';
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  left: 0;
+  width: 6rpx;
+  border-radius: 0 6rpx 6rpx 0;
+  background: linear-gradient(180deg, #0f766e, #14b8a6);
+  animation: slide-bar-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .conv-title {
   flex: 1;
@@ -149,9 +187,23 @@ export default {
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
+  transition: color 0.22s ease;
+}
+.conv-item--hover .conv-title {
+  color: #0f766e;
+}
+.conv-item.active .conv-title {
+  color: #0f766e;
+  font-weight: 800;
 }
 .more {
   padding: 6rpx;
+  opacity: 0.55;
+  transition: opacity 0.22s ease;
+}
+.conv-item--hover .more,
+.conv-item.active .more {
+  opacity: 1;
 }
 @keyframes slide-in {
   from { transform: translateX(-100%); }
@@ -160,5 +212,9 @@ export default {
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+@keyframes slide-bar-in {
+  from { transform: scaleY(0); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
 }
 </style>
