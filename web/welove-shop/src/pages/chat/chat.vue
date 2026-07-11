@@ -472,7 +472,7 @@ export default {
           // 静默失败,后端 Flux.doOnCancel 已兜底,UI 不阻塞
         })
     },
-    retryMessage(message) {
+    async retryMessage(message) {
       if (this.streaming) return
       // 用 _localId 定位原消息:MessageBubble emit 出来的可能是 chatStore 里的引用,
       // 而 this.messages 在 selectConversation 时被 map(hydrate) 重新创建,引用对比必失败。
@@ -483,16 +483,42 @@ export default {
       for (let i = idx - 1; i >= 0; i--) {
         if (this.messages[i].role === 'user') { userContent = this.messages[i].content; break }
       }
-      if (!userContent) return
+      if (!userContent) {
+        console.warn('[retry] no preceding user message found, abort retry', { localId, idx, msgCount: this.messages.length })
+        uni.showToast({ title: '找不到原始问题,无法重发', icon: 'none' })
+        return
+      }
+      const conversationId = this.currentConversation && this.currentConversation.id
+      if (!conversationId) {
+        console.warn('[retry] no current conversation, abort retry')
+        uni.showToast({ title: '会话已失效,请刷新页面', icon: 'none' })
+        return
+      }
+      console.log('[retry] start', { localId, conversationId, userContent: userContent.slice(0, 30) })
       target.errored = false
       target.stopped = false
       target.stoppedReason = ''
       target.pending = true
       target.streaming = true
       target.content = ''
+      target.productCards = []
+      target.confirmCard = null
+      target.cartSelection = null
+      target.id = null
+      target.taskType = ''
       this.setStreaming(true)
       this.scrollToBottom()
-      this.runStream(this.currentConversation && this.currentConversation.id, userContent, target, true)
+      try {
+        await this.runStream(conversationId, userContent, target, true)
+        console.log('[retry] runStream resolved')
+      } catch (e) {
+        console.error('[retry] runStream rejected', e)
+        // 出错时确保 UI 状态能恢复,避免卡在 streaming=true
+        target.streaming = false
+        target.pending = false
+        this.setStreaming(false)
+        uni.showToast({ title: '重发失败,请稍后再试', icon: 'none' })
+      }
     },
 
     /* ---------- 商品卡 / 加购 ---------- */

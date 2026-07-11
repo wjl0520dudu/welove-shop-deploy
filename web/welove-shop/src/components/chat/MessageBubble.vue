@@ -15,11 +15,11 @@
       <view v-if="message.errored" class="errored">
         <uni-icons type="info" size="13" color="#e17055" />
         <text>回复中断</text>
-        <text class="retry" @tap="$emit('retry', message)">重试</text>
+        <view class="retry" @tap="$emit('retry', message)">重试</view>
       </view>
       <view v-else-if="message.stopped" class="stopped-tag">
         <text class="stopped-label">已停止</text>
-        <text class="retry" @tap="$emit('retry', message)">重新生成</text>
+        <view class="retry" @tap="$emit('retry', message)">重新生成</view>
       </view>
       <view v-else-if="feedbackLabel" class="feedback-tag">
         <uni-icons :type="message.feedbackType === 'like' ? 'hand-up-filled' : 'hand-down-filled'" size="12" color="#98a2b3" />
