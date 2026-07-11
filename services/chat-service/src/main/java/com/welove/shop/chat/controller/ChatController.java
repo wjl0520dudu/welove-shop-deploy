@@ -8,6 +8,7 @@ import com.welove.shop.chat.entity.Message;
 import com.welove.shop.chat.service.ChatService;
 import com.welove.shop.common.core.result.Result;
 import com.welove.shop.common.security.context.UserContext;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -33,8 +34,18 @@ public class ChatController {
         return m != null ? Result.ok(m) : Result.ok();
     }
     @PostMapping(value = "/stream/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamMessages(@RequestBody StreamChatRequest req) {
-        return chatService.sendStreamMessage(UserContext.requireUserId(), req.getConversationId(), req.getContent(), req.getUsername() != null ? req.getUsername() : "user", null);
+    public SseEmitter streamMessages(@RequestBody StreamChatRequest req, HttpServletRequest httpReq) {
+        String jwtToken = extractJwt(httpReq);
+        return chatService.sendStreamMessage(
+                UserContext.requireUserId(),
+                req.getConversationId(),
+                req.getContent(),
+                req.getUsername() != null ? req.getUsername() : "user",
+                jwtToken,
+                req.getGender(),
+                req.getSkinType(),
+                req.getPreferenceTags()
+        );
     }
     @GetMapping("/messages") public Result<List<Message>> getMessages(@RequestParam Long conversationId) {
         return Result.ok(chatService.getMessages(conversationId));
@@ -47,5 +58,14 @@ public class ChatController {
     }
     @PostMapping("/messages/feedback") public Result<Void> submitFeedback(@RequestBody FeedbackRequest req) {
         chatService.submitFeedback(req); return Result.ok();
+    }
+
+    /** 从请求头提取 JWT token (去 Bearer 前缀)。 */
+    private String extractJwt(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header != null && header.startsWith("Bearer ")) {
+            return header.substring(7);
+        }
+        return null;
     }
 }

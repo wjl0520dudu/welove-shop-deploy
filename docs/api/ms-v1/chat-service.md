@@ -85,35 +85,100 @@
 | 鉴权 | **是** |
 | Content-Type | `text/event-stream` |
 | 特殊 | **不走 Result 包装** |
+| 后端调用 | WebClient → `http://127.0.0.1:8000/api/assistant/stream` |
 
 **请求体: `StreamChatRequest`**
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `userId` | Long | 是 | |
-| `conversationId` | Long | 是 | |
+| `userId` | Long | 是 | 用户 ID |
+| `conversationId` | Long | 是 | 对话 ID |
 | `content` | String | 是 | 用户消息 |
 | `username` | String | 否 | 用户名 (默认 `"user"`) |
 | `isAdmin` | boolean | 否 | 是否管理员 |
-| `gender` | String | 否 | 性别 |
-| `skinType` | String | 否 | 肤质 |
-| `preferenceTags` | List\<String\> | 否 | 偏好标签 |
+| `gender` | String | 否 | 性别 (透传到 ai-service 做个性化推荐) |
+| `skinType` | String | 否 | 肤质, 如 `"干皮"` (透传到 ai-service) |
+| `preferenceTags` | List\<String\> | 否 | 偏好标签 (透传到 ai-service) |
 
-**响应格式:** SSE 事件流
+**Java 后端处理流程:**
+1. 接收请求 → 提取 JWT token → 保存用户消息
+2. 组装 `ChatRequest` 调用 ai-service `/api/assistant/stream`
+3. 订阅 SSE 事件流, 按类型收集数据
+4. 流结束时持久化 Message (含 productCards / confirmCard / cartSelection 到 JSONB)
 
+**SSE 事件类型:**
+
+| 事件 | 说明 | data 关键字段 |
+|------|------|-------------|
+| `start` | 流开始 | `run_id`, `trace_id` |
+| `route` | AI 路由分类 | `task_type` — `"shopping"` / `"knowledge"` / `"chitchat"` |
+| `token` | 增量文本 | `content` — 逐 token 增量 |
+| `tool_call` | 工具调用 | `tool_name`, `input_params` |
+| `tool_result` | 工具结果 | `output` |
+| `final` | 最终结果 | `response` — 完整 AIResponse (含 productCards / confirmCard / cartSelection) |
+| `error` | 错误 | `message`, `error_code` |
+| `done` | 流结束 | `messageId` — 持久化的消息 ID |
+
+**ProductCard 结构 (来自 ai-service 的 final 事件):**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `product_id` | Integer | 商品 ID |
+| `title` | String | 商品标题 |
+| `brand` | String | 品牌 |
+| `price` | Float | 显示价格 |
+| `base_price` | Float | 基础价格 |
+| `image_url` | String | 商品图片 URL |
+| `rating` | Float | 评分 0-5 |
+| `sales_count` | Integer | 销量 |
+| `sub_category` | String | 子分类 |
+| `reason` | String | 推荐理由 |
+| `_score` | Float | 内部检索分数 (观测用) |
+| `_matched_needs` | List\<String\> | 命中偏好 |
+| `_recall_sources` | List\<String\> | 召回来源 |
+
+**前端使用示例:**
+
+```javascript
+// 通过 fetch 订阅 SSE (uni-app 不支持 EventSource)
+const response = await fetch('/api/chat/chat/stream/messages', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+  body: JSON.stringify({ userId, conversationId, content, username, gender, skinType, preferenceTags })
+})
+
+const reader = response.body.getReader()
+const decoder = new TextDecoder()
+let buffer = ''
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+  buffer += decoder.decode(value, { stream: true })
+  // 按 SSE 帧解析: event: xxx\ndata: {...}\n\n
+  const frames = buffer.split('\n\n')
+  buffer = frames.pop() // 保留最后一个不完整帧
+  for (const frame of frames) {
+    const lines = frame.split('\n')
+    let eventType = 'message', data = ''
+    for (const line of lines) {
+      if (line.startsWith('event: ')) eventType = line.slice(7)
+      if (line.startsWith('data: ')) data = line.slice(6)
+    }
+    if (!data) continue
+    const parsed = JSON.parse(data)
+    switch (eventType) {
+      case 'token': appendText(parsed.content); break
+      case 'final': renderProductCards(parsed.response?.product_cards); break
+      case 'done': console.log('Message saved, id:', parsed.messageId); break
+    }
+  }
+}
 ```
-event: message
-data: {"content": "你好", ...}
 
-event: product_card
-data: {"product_id": 12, "title": "修复面霜", ...}
-
-event: done
-data: {"messageId": 42}
-```
-
-> 实时推送, 无需轮询. 后端通过 WebClient 订阅 Python ai-service `/ask/stream` 再转发.
+> Java 后端通过 WebClient 订阅 ai-service `/api/assistant/stream`, 逐事件转发给前端.
 > SseEmitter 超时: 5 分钟.
+> 流结束时自动持久化 Message 到 PG, 含 productCards / confirmCard / cartSelection JSONB 字段.
 
 ---
 

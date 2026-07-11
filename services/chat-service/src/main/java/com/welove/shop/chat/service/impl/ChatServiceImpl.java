@@ -95,50 +95,147 @@ public class ChatServiceImpl implements ChatService {
     }
 
     // ---------- SSE stream ----------
-    @Override public SseEmitter sendStreamMessage(Long userId, Long conversationId, String content, String username, String jwtToken) {
+    @Override public SseEmitter sendStreamMessage(Long userId, Long conversationId, String content,
+                                                   String username, String jwtToken,
+                                                   String gender, String skinType, java.util.List<String> preferenceTags) {
         SseEmitter emitter = new SseEmitter(sseTimeout);
         CompletableFuture.runAsync(() -> {
             try {
                 if (isDuplicate(conversationId, content)) { emitter.complete(); return; }
                 saveUserMessage(conversationId, content);
                 if (isFirstMessage(conversationId)) aiService.generateTitle(conversationId, content);
-                // 拼 AI 请求体
+
+                // 拼 AI 请求体 —— 对齐 ai-service /api/assistant/stream 的 ChatRequest schema
                 Map<String, Object> aiBody = new java.util.HashMap<>();
-                aiBody.put("question", content); aiBody.put("conversation_id", conversationId.toString());
-                aiBody.put("user_id", userId.toString()); aiBody.put("username", username);
+                aiBody.put("question", content);
+                aiBody.put("conversation_id", conversationId.toString());
+                aiBody.put("user_id", userId.toString());
+                aiBody.put("username", username);
                 aiBody.put("is_admin", false);
-                // SSE events 收集
+                if (jwtToken != null) aiBody.put("jwt_token", jwtToken);
+                if (gender != null) aiBody.put("gender", gender);
+                if (skinType != null) aiBody.put("skin_type", skinType);
+                if (preferenceTags != null) aiBody.put("preference_tags", preferenceTags);
+
+                // SSE 事件收集 (数组引用供 lambda 内修改)
                 StringBuilder answerBuilder = new StringBuilder();
-                Flux<String> flux = webClient.post().uri("/ask/stream").bodyValue(aiBody)
+                String[] taskType = {""};
+                java.util.List<Map<String, Object>>[] productCards = new java.util.List[]{new java.util.ArrayList<>()};
+                Map<String, Object>[] confirmCard = new Map[]{null};
+                Map<String, Object>[] cartSelection = new Map[]{null};
+                String[] sources = {""};
+
+                Flux<String> flux = webClient.post().uri("/assistant/stream").bodyValue(aiBody)
                         .retrieve().bodyToFlux(String.class);
+
                 flux.doOnNext(line -> {
                     try {
-                        if (line.startsWith("data: ")) line = line.substring(6);
-                        Map<String, Object> event = objectMapper.readValue(line, Map.class);
-                        String type = String.valueOf(event.getOrDefault("type", "token"));
-                        emitter.send(SseEmitter.event().name(type).data(line));
-                        if ("token".equals(type)) answerBuilder.append(event.getOrDefault("content", ""));
-                        if ("error".equals(type)) emitter.complete();
-                    } catch (IOException e) { log.warn("SSE parse failed: {}", e.getMessage()); }
+                        // 跳过 SSE 空行 / 注释行
+                        if (line.isEmpty() || line.startsWith(":")) return;
+                        // 解析 SSE 帧: event: xxx\ndata: {...}
+                        String eventType = "message";
+                        String data = line;
+                        if (line.startsWith("event: ")) {
+                            eventType = line.substring(7).trim();
+                            data = null; // data 在下一帧
+                        } else if (line.startsWith("data: ")) {
+                            data = line.substring(6);
+                        }
+                        if (data == null) return;
+
+                        // 解析 data JSON
+                        Map<String, Object> event = objectMapper.readValue(data, Map.class);
+                        if (event.containsKey("type") && eventType.equals("message")) {
+                            eventType = String.valueOf(event.get("type"));
+                        }
+
+                        // 透传给前端(保持原始 SSE 帧)
+                        emitter.send(SseEmitter.event().name(eventType).data(data));
+
+                        // 按事件类型收集数据
+                        switch (eventType) {
+                            case "token":
+                                answerBuilder.append(event.getOrDefault("content", ""));
+                                break;
+                            case "route":
+                                if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                                break;
+                            case "final":
+                                // 最终事件: 提取 answer / productCards / confirmCard / cartSelection
+                                if (event.containsKey("content") && answerBuilder.length() == 0) {
+                                    answerBuilder.append(event.get("content"));
+                                }
+                                Map<String, Object> response = (Map<String, Object>) event.get("response");
+                                if (response != null) {
+                                    if (response.containsKey("answer") && answerBuilder.length() == 0) {
+                                        answerBuilder.append(response.get("answer"));
+                                    }
+                                    if (response.containsKey("task_type")) taskType[0] = String.valueOf(response.get("task_type"));
+                                    if (response.containsKey("product_cards")) {
+                                        productCards[0] = (java.util.List<Map<String, Object>>) response.get("product_cards");
+                                    }
+                                    if (response.containsKey("confirm_card")) {
+                                        confirmCard[0] = (Map<String, Object>) response.get("confirm_card");
+                                    }
+                                    if (response.containsKey("cart_selection")) {
+                                        cartSelection[0] = (Map<String, Object>) response.get("cart_selection");
+                                    }
+                                    if (response.containsKey("sources")) {
+                                        sources[0] = objectMapper.writeValueAsString(response.get("sources"));
+                                    }
+                                }
+                                break;
+                            case "error":
+                                log.warn("AI stream error: {}", event.getOrDefault("message", ""));
+                                break;
+                        }
+                    } catch (IOException e) {
+                        log.warn("SSE parse failed: {}", e.getMessage());
+                    }
                 }).doOnComplete(() -> {
                     try {
+                        String answer = answerBuilder.toString();
+                        // 持久化 AI 消息(含 productCards / confirmCard / cartSelection)
                         Message aiMsg = new Message();
                         aiMsg.setConversationId(conversationId);
                         aiMsg.setRole("assistant");
-                        aiMsg.setContent(answerBuilder.toString());
+                        aiMsg.setContent(answer.isEmpty() ? "AI 暂时无法回复,请稍后再试" : answer);
                         aiMsg.setMessageType("text");
+                        aiMsg.setTaskType(taskType[0].isEmpty() ? "shopping" : taskType[0]);
+                        if (!productCards[0].isEmpty()) {
+                            aiMsg.setProductCards(productCards[0]);
+                        }
+                        if (confirmCard[0] != null) {
+                            aiMsg.setConfirmCard(confirmCard[0]);
+                        }
+                        if (cartSelection[0] != null) {
+                            aiMsg.setCartSelection(cartSelection[0]);
+                        }
+                        aiMsg.setSources(sources[0].isEmpty() ? null : sources[0]);
                         aiMsg.setCreateTime(LocalDateTime.now());
                         msgMapper.insert(aiMsg);
-                        saveQaLog(userId, conversationId, content, answerBuilder.toString(), "shopping", 0L);
+                        saveQaLog(userId, conversationId, content, answer, taskType[0].isEmpty() ? "shopping" : taskType[0], 0L);
+                        // 发送 done 事件并关闭
+                        emitter.send(SseEmitter.event().name("done").data(Map.of("messageId", aiMsg.getId())));
                         emitter.complete();
-                    } catch (Exception e) { log.error("SSE onComplete save failed", e); emitter.complete(); }
+                    } catch (Exception e) {
+                        log.error("SSE onComplete save failed", e);
+                        try { emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                        } catch (IOException ex) { }
+                        emitter.complete();
+                    }
                 }).doOnError(e -> {
-                    try { emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                    log.error("SSE stream error", e);
+                    try {
+                        emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
                     } catch (IOException ex) { }
                     emitter.complete();
                 }).subscribe();
             } catch (Exception e) {
-                try { emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage()))); emitter.complete();
+                log.error("SSE setup error", e);
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                    emitter.complete();
                 } catch (IOException ex) { emitter.completeWithError(ex); }
             }
         });

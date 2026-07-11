@@ -34,10 +34,10 @@ public class AiServiceImpl implements AiService {
         body.put("username", username);
         body.put("is_admin", false);
         try {
-            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/ask", body, Map.class);
+            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/assistant/run", body, Map.class);
             return resp != null ? resp : Map.of("answer", "AI 服务暂不可用");
         } catch (Exception e) {
-            log.warn("[AiService] /ask failed: {}", e.getMessage());
+            log.warn("[AiService] /assistant/run failed: {}", e.getMessage());
             return Map.of("answer", "AI 服务暂不可用,请稍后再试");
         }
     }
