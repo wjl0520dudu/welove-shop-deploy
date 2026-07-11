@@ -143,7 +143,11 @@ public class ChatServiceImpl implements ChatService {
                         .bodyValue(aiBody)
                         .retrieve().bodyToFlux(sseType);
 
-                flux.doOnNext(sse -> {
+                // 用 AtomicReference<Subscription> 在 doOnNext 内捕获到「客户端断开」时主动 cancel,
+                // 让 Flux.doOnCancel 自然触发(而不是被 emitter.send() 抛出的 IOException 推进 doOnError)。
+                java.util.concurrent.atomic.AtomicReference<org.reactivestreams.Subscription> upstreamSub = new java.util.concurrent.atomic.AtomicReference<>();
+                flux.doOnSubscribe(sub -> upstreamSub.set(sub))
+                .doOnNext(sse -> {
                     try {
                         String eventType = sse.event() != null ? sse.event() : "message";
                         String data = sse.data();
@@ -188,7 +192,20 @@ public class ChatServiceImpl implements ChatService {
                                 break;
                         }
                     } catch (IOException e) {
-                        log.warn("SSE parse failed: {}", e.getMessage());
+                        // 客户端断开时 emitter.send() 会抛「Software caused connection abort」等 IOException,
+                        // 这里要识别为「客户端断开」而不是「解析失败」,主动 cancel 上游让 doOnCancel 接管。
+                        String msg = e.getMessage() == null ? "" : e.getMessage();
+                        if (msg.contains("Software caused connection abort")
+                                || msg.contains("Connection reset")
+                                || msg.contains("已建立的连接")
+                                || msg.contains("Broken pipe")
+                                || msg.contains("Connection closed")) {
+                            log.info("client disconnected (emitter.send IOException), cancel upstream conv={}", conversationId);
+                            org.reactivestreams.Subscription s = upstreamSub.get();
+                            if (s != null) s.cancel();
+                            throw new java.util.concurrent.CancellationException("client disconnected");
+                        }
+                        log.warn("SSE parse failed: {}", msg);
                     }
                 }).doOnComplete(() -> {
                     if (!finalized.compareAndSet(false, true)) return;
@@ -225,13 +242,18 @@ public class ChatServiceImpl implements ChatService {
                         emitter.complete();
                     }
                 }).doOnError(e -> {
+                    // CancellationException 是 doOnNext 内识别到「客户端断开」后主动 cancel 触发的,
+                    // 不应进 error 路径,统一由 doOnCancel 落库 + 关流。
+                    if (e instanceof java.util.concurrent.CancellationException) {
+                        log.debug("SSE canceled by client, ignore error path conv={}", conversationId);
+                        return;
+                    }
                     if (!finalized.compareAndSet(false, true)) {
-                        // 已被 doOnCancel 截走(客户端断开通常走 doOnCancel 路径),此处只关流。
                         emitter.complete();
                         return;
                     }
                     log.error("SSE stream error", e);
-                    // 落库 status=error,保留已收 token
+                    // 落库 status=truncated + stopped_reason=server_error,保留已收 token
                     String answer = answerBuilder.toString();
                     Long errId = persistTruncatedInternal(conversationId, answer,
                             productCards[0], confirmCard[0], cartSelection[0],

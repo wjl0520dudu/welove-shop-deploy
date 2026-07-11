@@ -352,10 +352,15 @@ export default {
         },
         onDone: (data) => { this.finishStream(assistant, data, conversationId) },
         onError: () => {
+          // 注意:AbortError 路径不会走这里——chat.vue 已在 runStream 的 catch 里显式 return。
+          // 走到 onError 一定是后端真正发了 error 事件(LLM 异常 / ai-service 5xx 等)。
           assistant.pending = false
-          if (!assistant.content) assistant.errored = true
-          this.setStreaming(false)
           assistant.streaming = false
+          if (!assistant.content) {
+            // 没有任何 token 才标 errored,提示用户「回复中断」
+            assistant.errored = true
+          }
+          this.setStreaming(false)
           if (this.streamHandle) this.streamHandle.abort()
         }
       }
@@ -469,21 +474,25 @@ export default {
     },
     retryMessage(message) {
       if (this.streaming) return
-      const idx = this.messages.indexOf(message)
+      // 用 _localId 定位原消息:MessageBubble emit 出来的可能是 chatStore 里的引用,
+      // 而 this.messages 在 selectConversation 时被 map(hydrate) 重新创建,引用对比必失败。
+      const localId = message && message._localId
+      const target = (localId ? this.messages.find((m) => m._localId === localId) : null) || message
+      const idx = this.messages.indexOf(target)
       let userContent = ''
       for (let i = idx - 1; i >= 0; i--) {
         if (this.messages[i].role === 'user') { userContent = this.messages[i].content; break }
       }
       if (!userContent) return
-      message.errored = false
-      message.stopped = false
-      message.stoppedReason = ''
-      message.pending = true
-      message.streaming = true
-      message.content = ''
+      target.errored = false
+      target.stopped = false
+      target.stoppedReason = ''
+      target.pending = true
+      target.streaming = true
+      target.content = ''
       this.setStreaming(true)
       this.scrollToBottom()
-      this.runStream(this.currentConversation && this.currentConversation.id, userContent, message, true)
+      this.runStream(this.currentConversation && this.currentConversation.id, userContent, target, true)
     },
 
     /* ---------- 商品卡 / 加购 ---------- */
