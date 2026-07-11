@@ -103,7 +103,8 @@ public class ChatServiceImpl implements ChatService {
     // ---------- SSE stream ----------
     @Override public SseEmitter sendStreamMessage(Long userId, Long conversationId, String content,
                                                    String username, String jwtToken,
-                                                   String gender, String skinType, java.util.List<String> preferenceTags) {
+                                                   String gender, String skinType, java.util.List<String> preferenceTags,
+                                                   boolean retry) {
         SseEmitter emitter = new SseEmitter(sseTimeout);
         // 用 AtomicBoolean 标记是否已正常完成,防止多个回调同时触发写库双写。
         java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -150,9 +151,11 @@ public class ChatServiceImpl implements ChatService {
 
         CompletableFuture.runAsync(() -> {
             try {
-                if (isDuplicate(conversationId, content)) { emitter.complete(); return; }
-                saveUserMessage(conversationId, content);
-                if (isFirstMessage(conversationId)) aiService.generateTitle(conversationId, content);
+                // retry=true 时跳过 dedup 检查 (前端点「重新生成」会用相同的 content),
+                // 同时跳过 saveUserMessage 避免历史里出现重复 user msg。
+                if (!retry && isDuplicate(conversationId, content)) { emitter.complete(); return; }
+                if (!retry) saveUserMessage(conversationId, content);
+                if (!retry && isFirstMessage(conversationId)) aiService.generateTitle(conversationId, content);
 
                 // 拼 AI 请求体 —— 对齐 ai-service /api/assistant/stream 的 ChatRequest schema
                 Map<String, Object> aiBody = new java.util.HashMap<>();

@@ -45,7 +45,8 @@ public class ChatController {
                 jwtToken,
                 req.getGender(),
                 req.getSkinType(),
-                req.getPreferenceTags()
+                req.getPreferenceTags(),
+                req.isRetry()
         );
     }
     @GetMapping("/messages") public Result<List<Message>> getMessages(@RequestParam Long conversationId) {

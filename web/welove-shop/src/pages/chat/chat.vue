@@ -320,14 +320,14 @@ export default {
 
       await this.runStream(conv.id, content, reactiveAssistant, true)
     },
-    async runStream(conversationId, content, assistant, allowAuthRetry) {
+    async runStream(conversationId, content, assistant, allowAuthRetry, retry = false) {
       if (!supportsEventStream()) {
         const ok = await this.fallbackSend(conversationId, content, assistant)
         if (!ok) this.markErrored(assistant)
         return
       }
 
-      const payload = this.buildPayload(conversationId, content)
+      const payload = this.buildPayload(conversationId, content, retry)
       let gotText = false
       const callbacks = {
         onText: (delta) => {
@@ -509,7 +509,7 @@ export default {
       this.setStreaming(true)
       this.scrollToBottom()
       try {
-        await this.runStream(conversationId, userContent, target, true)
+        await this.runStream(conversationId, userContent, target, true, true)
         console.log('[retry] runStream resolved')
       } catch (e) {
         console.error('[retry] runStream rejected', e)
@@ -619,7 +619,7 @@ export default {
     buildRecommended() {
       this.recommended = buildRecommendedQuestions(userStore.state.user || {}, { limit: 4 })
     },
-    buildPayload(conversationId, content) {
+    buildPayload(conversationId, content, retry = false) {
       const u = userStore.state.user || {}
       return {
         userId: Number(u.id) || undefined,
@@ -629,7 +629,8 @@ export default {
         isAdmin: false,
         gender: u.gender,
         skinType: u.skinType,
-        preferenceTags: this.normalizeTags(u.preferenceTags)
+        preferenceTags: this.normalizeTags(u.preferenceTags),
+        retry
       }
     },
     normalizeTags(tags) {

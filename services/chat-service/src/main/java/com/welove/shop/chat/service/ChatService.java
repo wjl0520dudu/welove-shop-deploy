@@ -19,7 +19,8 @@ public interface ChatService {
     /** 流式发送消息(SSE) —— 返回 SseEmitter,Controller 层用。 */
     org.springframework.web.servlet.mvc.method.annotation.SseEmitter sendStreamMessage(
             Long userId, Long conversationId, String content, String username,
-            String jwtToken, String gender, String skinType, java.util.List<String> preferenceTags);
+            String jwtToken, String gender, String skinType, java.util.List<String> preferenceTags,
+            boolean retry);
     /** 删除会话(级联消息)。 */
     void deleteConversation(Long conversationId);
     /** 更新会话(标题/置顶)。 */
