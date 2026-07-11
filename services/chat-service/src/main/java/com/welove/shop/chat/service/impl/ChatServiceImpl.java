@@ -105,15 +105,48 @@ public class ChatServiceImpl implements ChatService {
                                                    String username, String jwtToken,
                                                    String gender, String skinType, java.util.List<String> preferenceTags) {
         SseEmitter emitter = new SseEmitter(sseTimeout);
-        // 用 AtomicBoolean 标记是否已正常完成,防止 doOnCancel 与 doOnComplete 同时触发写库双写。
+        // 用 AtomicBoolean 标记是否已正常完成,防止多个回调同时触发写库双写。
         java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
-        // 把流式累积容器提升到闭包外,使 doOnCancel / doOnError / doOnComplete 都能访问。
+        // 把流式累积容器提升到闭包外,使 SseEmitter.onError/onCompletion/onTimeout 回调也能访问。
         StringBuilder answerBuilder = new StringBuilder();
         String[] taskType = {""};
         java.util.List<Map<String, Object>>[] productCards = new java.util.List[]{new java.util.ArrayList<>()};
         Map<String, Object>[] confirmCard = new Map[]{null};
         Map<String, Object>[] cartSelection = new Map[]{null};
         String[] sources = {""};
+
+        // ============= SseEmitter 生命周期回调 =============
+        // onCompletion: 流正常关闭时调用(包括 emitter.complete() 和客户端正常断开)
+        // onTimeout:     SSE 超时(sseTimeout)时调用
+        // onError:       客户端断开时 Tomcat 抛 IOException 触发,这是 Spring 推荐的「客户端断开」信号。
+        // doOnNext 中 try-catch emitter.send() 抛 IOException + 改走 doOnCancel 的思路不可靠(Reactor 内部信号竞态),
+        // 这里直接用 SseEmitter 的回调,更稳定。
+        emitter.onCompletion(() -> {
+            // 正常关闭路径 (emitter.complete()) 不需要再落库,doOnComplete 已经处理
+            log.debug("SseEmitter onCompletion conv={}", conversationId);
+        });
+        emitter.onTimeout(() -> {
+            // SSE 超时也当作「客户端断开」处理(可能是网络差被服务器端提前关了)
+            if (finalized.compareAndSet(false, true)) {
+                log.info("SseEmitter onTimeout, persist truncated conv={}", conversationId);
+                persistTruncatedInternal(conversationId, answerBuilder.toString(),
+                        productCards[0], confirmCard[0], cartSelection[0],
+                        taskType[0], STOP_USER_ABORT);
+            }
+            emitter.complete();
+        });
+        emitter.onError((ex) -> {
+            // 客户端断开 → 这是 Spring 官方推荐的「客户端断开」检测点
+            if (finalized.compareAndSet(false, true)) {
+                String exMsg = ex == null ? "" : ex.getMessage();
+                log.info("SseEmitter onError (client likely disconnected): {}, persist truncated conv={}",
+                        exMsg == null ? "(null)" : exMsg, conversationId);
+                persistTruncatedInternal(conversationId, answerBuilder.toString(),
+                        productCards[0], confirmCard[0], cartSelection[0],
+                        taskType[0], STOP_USER_ABORT);
+            }
+            // 不要再调用 emitter.complete()/send(),流已断,会再次抛异常
+        });
 
         CompletableFuture.runAsync(() -> {
             try {
@@ -143,69 +176,64 @@ public class ChatServiceImpl implements ChatService {
                         .bodyValue(aiBody)
                         .retrieve().bodyToFlux(sseType);
 
-                // 用 AtomicReference<Subscription> 在 doOnNext 内捕获到「客户端断开」时主动 cancel,
-                // 让 Flux.doOnCancel 自然触发(而不是被 emitter.send() 抛出的 IOException 推进 doOnError)。
-                java.util.concurrent.atomic.AtomicReference<org.reactivestreams.Subscription> upstreamSub = new java.util.concurrent.atomic.AtomicReference<>();
-                flux.doOnSubscribe(sub -> upstreamSub.set(sub))
-                .doOnNext(sse -> {
-                    try {
-                        String eventType = sse.event() != null ? sse.event() : "message";
-                        String data = sse.data();
-                        if (data == null || data.isEmpty()) return;
+                flux.doOnNext(sse -> {
+                    // emitter.send() 抛 IOException 时(客户端断开),让其自然抛到 Reactor,
+                    // 配合 SseEmitter.onError 回调落库。此处只需吞掉 JSON 解析异常,不让真正
+                    // 的客户端断开被掩盖成 parse failed。
+                    String eventType = sse.event() != null ? sse.event() : "message";
+                    String data = sse.data();
+                    if (data == null || data.isEmpty()) return;
 
+                    try {
                         // 透传给前端(保留正确的事件名 + 原始 data JSON)。
                         // 上游 done 不透传:chat-service 在 doOnComplete 统一补发带 messageId 的 done,避免前端收到两个 done。
                         if (!"done".equals(eventType)) {
                             emitter.send(SseEmitter.event().name(eventType).data(data));
                         }
+                    } catch (IOException ioe) {
+                        // 客户端断开:不再吞,让 Reactor 进入 doOnError 兜底
+                        throw new RuntimeException(ioe);
+                    }
 
-                        // 解析 data JSON 用于持久化收集
-                        Map<String, Object> event = objectMapper.readValue(data, Map.class);
-                        switch (eventType) {
-                            case "token":
-                                answerBuilder.append(event.getOrDefault("content", ""));
-                                break;
-                            case "route":
-                                if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
-                                break;
-                            case "final":
-                                // ai-service 的 final data 即完整 AIResponse，字段在顶层(非嵌套 response)
-                                if (answerBuilder.length() == 0 && event.containsKey("answer")) {
-                                    answerBuilder.append(event.get("answer"));
-                                }
-                                if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
-                                if (event.get("product_cards") instanceof java.util.List<?> pc) {
-                                    productCards[0] = (java.util.List<Map<String, Object>>) pc;
-                                }
-                                if (event.get("confirm_card") instanceof Map<?, ?> cc) {
-                                    confirmCard[0] = (Map<String, Object>) cc;
-                                }
-                                if (event.get("cart_selection") instanceof Map<?, ?> cs) {
-                                    cartSelection[0] = (Map<String, Object>) cs;
-                                }
-                                if (event.containsKey("sources")) {
+                    // 解析 data JSON 用于持久化收集 (这里独立 try,不影响 send)
+                    Map<String, Object> event;
+                    try {
+                        event = objectMapper.readValue(data, Map.class);
+                    } catch (IOException je) {
+                        log.warn("SSE data JSON parse failed: {}", je.getMessage());
+                        return;
+                    }
+                    switch (eventType == null ? "" : eventType) {
+                        case "token":
+                            answerBuilder.append(event.getOrDefault("content", ""));
+                            break;
+                        case "route":
+                            if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                            break;
+                        case "final":
+                            // ai-service 的 final data 即完整 AIResponse，字段在顶层(非嵌套 response)
+                            if (answerBuilder.length() == 0 && event.containsKey("answer")) {
+                                answerBuilder.append(event.get("answer"));
+                            }
+                            if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                            if (event.get("product_cards") instanceof java.util.List<?> pc) {
+                                productCards[0] = (java.util.List<Map<String, Object>>) pc;
+                            }
+                            if (event.get("confirm_card") instanceof Map<?, ?> cc) {
+                                confirmCard[0] = (Map<String, Object>) cc;
+                            }
+                            if (event.get("cart_selection") instanceof Map<?, ?> cs) {
+                                cartSelection[0] = (Map<String, Object>) cs;
+                            }
+                            if (event.containsKey("sources")) {
+                                try {
                                     sources[0] = objectMapper.writeValueAsString(event.get("sources"));
-                                }
-                                break;
-                            case "error":
-                                log.warn("AI stream error: {}", event.getOrDefault("message", ""));
-                                break;
-                        }
-                    } catch (IOException e) {
-                        // 客户端断开时 emitter.send() 会抛「Software caused connection abort」等 IOException,
-                        // 这里要识别为「客户端断开」而不是「解析失败」,主动 cancel 上游让 doOnCancel 接管。
-                        String msg = e.getMessage() == null ? "" : e.getMessage();
-                        if (msg.contains("Software caused connection abort")
-                                || msg.contains("Connection reset")
-                                || msg.contains("已建立的连接")
-                                || msg.contains("Broken pipe")
-                                || msg.contains("Connection closed")) {
-                            log.info("client disconnected (emitter.send IOException), cancel upstream conv={}", conversationId);
-                            org.reactivestreams.Subscription s = upstreamSub.get();
-                            if (s != null) s.cancel();
-                            throw new java.util.concurrent.CancellationException("client disconnected");
-                        }
-                        log.warn("SSE parse failed: {}", msg);
+                                } catch (IOException ignored) { }
+                            }
+                            break;
+                        case "error":
+                            log.warn("AI stream error: {}", event.getOrDefault("message", ""));
+                            break;
                     }
                 }).doOnComplete(() -> {
                     if (!finalized.compareAndSet(false, true)) return;
@@ -232,28 +260,27 @@ public class ChatServiceImpl implements ChatService {
                         aiMsg.setCreateTime(LocalDateTime.now());
                         msgMapper.insert(aiMsg);
                         saveQaLog(userId, conversationId, content, answer, taskType[0].isEmpty() ? "shopping" : taskType[0], 0L);
-                        // 发送 done 事件并关闭
+                        // 发送 done 事件并关闭 (set finalized 已在上面 compareAndSet 完成)
                         emitter.send(SseEmitter.event().name("done").data(Map.of("messageId", aiMsg.getId())));
                         emitter.complete();
                     } catch (Exception e) {
                         log.error("SSE onComplete save failed", e);
-                        try { emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                        // finalize 已 true,onError 不会再触发;但要发 error 给前端(如果连接还在)
+                        try {
+                            emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
                         } catch (IOException ex) { }
                         emitter.complete();
                     }
                 }).doOnError(e -> {
-                    // CancellationException 是 doOnNext 内识别到「客户端断开」后主动 cancel 触发的,
-                    // 不应进 error 路径,统一由 doOnCancel 落库 + 关流。
-                    if (e instanceof java.util.concurrent.CancellationException) {
-                        log.debug("SSE canceled by client, ignore error path conv={}", conversationId);
-                        return;
-                    }
+                    // Reactor 链上报错:不是客户端断开(已由 emitter.onError 兜底),
+                    // 而是 ai-service 自身出错 / 网络异常等真正的服务端问题。
+                    // 注意:即使客户端断开,WebClient 的上游 reader.read() 在 Reactor 内部也会走 doOnError,
+                    // 所以这里需要再次兜底,避免与 emitter.onError 双写(finalized 已经保证只写一次)。
                     if (!finalized.compareAndSet(false, true)) {
-                        emitter.complete();
+                        log.debug("Reactor doOnError but already finalized (handled by emitter.onError) conv={}", conversationId);
                         return;
                     }
-                    log.error("SSE stream error", e);
-                    // 落库 status=truncated + stopped_reason=server_error,保留已收 token
+                    log.error("SSE stream error (ai-service upstream)", e);
                     String answer = answerBuilder.toString();
                     Long errId = persistTruncatedInternal(conversationId, answer,
                             productCards[0], confirmCard[0], cartSelection[0],
@@ -265,18 +292,12 @@ public class ChatServiceImpl implements ChatService {
                         emitter.send(SseEmitter.event().name("error").data(payload));
                     } catch (IOException ex) { }
                     emitter.complete();
-                }).doOnCancel(() -> {
-                    // 客户端断开 → 双保险之一:把已收 token 持久化为 truncated
-                    if (!finalized.compareAndSet(false, true)) return;
-                    log.info("SSE stream canceled (client disconnected), persist truncated conv={}", conversationId);
-                    persistTruncatedInternal(conversationId, answerBuilder.toString(),
-                            productCards[0], confirmCard[0], cartSelection[0],
-                            taskType[0], STOP_USER_ABORT);
-                    // 客户端已断开,emitter.send() 必然抛异常,此处不补发任何事件,只关闭即可
-                    emitter.complete();
                 }).subscribe();
             } catch (Exception e) {
                 log.error("SSE setup error", e);
+                if (finalized.compareAndSet(false, true)) {
+                    persistTruncatedInternal(conversationId, "", null, null, null, "", STOP_SERVER);
+                }
                 try {
                     emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
                     emitter.complete();
@@ -319,34 +340,44 @@ public class ChatServiceImpl implements ChatService {
                                           Map<String, Object> confirmCard,
                                           Map<String, Object> cartSelection,
                                           String taskType, String stoppedReason) {
+        log.info("[truncated] enter persistTruncatedInternal conv={} reason={} contentLen={}",
+                conversationId, stoppedReason, content == null ? 0 : content.length());
         if (content == null || content.isEmpty()) {
-            // 空内容不写 assistant 行(刚启动就 abort 时常见)。
             log.info("skip persist truncated: empty content conv={}", conversationId);
             return null;
         }
-        String prefix = content.length() > 32 ? content.substring(0, 32) : content;
-        Message dup = msgMapper.selectRecentTruncated(conversationId, prefix, TRUNC_DEDUP_SECONDS);
-        if (dup != null) {
-            log.info("truncated dedup hit, skip insert conv={} existingId={}", conversationId, dup.getId());
-            return dup.getId();
+        try {
+            String prefix = content.length() > 32 ? content.substring(0, 32) : content;
+            // 在 Java 端拼好 LIKE pattern,避免 PG 推断 CONCAT(?) 参数类型失败
+            String contentLike = prefix + "%";
+            Message dup = msgMapper.selectRecentTruncated(conversationId, contentLike, TRUNC_DEDUP_SECONDS);
+            if (dup != null) {
+                log.info("truncated dedup hit, skip insert conv={} existingId={}", conversationId, dup.getId());
+                return dup.getId();
+            }
+            Message aiMsg = new Message();
+            aiMsg.setConversationId(conversationId);
+            aiMsg.setRole("assistant");
+            aiMsg.setContent(content);
+            aiMsg.setMessageType("text");
+            aiMsg.setTaskType(taskType == null || taskType.isEmpty() ? "shopping" : taskType);
+            aiMsg.setStatus(STATUS_TRUNCATED);
+            aiMsg.setStoppedReason(stoppedReason);
+            aiMsg.setStoppedAt(LocalDateTime.now());
+            if (productCards != null && !productCards.isEmpty()) aiMsg.setProductCards(productCards);
+            if (confirmCard != null) aiMsg.setConfirmCard(confirmCard);
+            if (cartSelection != null) aiMsg.setCartSelection(cartSelection);
+            aiMsg.setCreateTime(LocalDateTime.now());
+            log.info("[truncated] before insert conv={} contentLen={}", conversationId, content.length());
+            msgMapper.insert(aiMsg);
+            log.info("persisted truncated assistant conv={} id={} reason={} len={}",
+                    conversationId, aiMsg.getId(), stoppedReason, content.length());
+            return aiMsg.getId();
+        } catch (Exception e) {
+            // 任何异常都吞掉并打日志,避免中断 SseEmitter 回调线程
+            log.error("[truncated] persist failed conv={} reason={}", conversationId, stoppedReason, e);
+            return null;
         }
-        Message aiMsg = new Message();
-        aiMsg.setConversationId(conversationId);
-        aiMsg.setRole("assistant");
-        aiMsg.setContent(content);
-        aiMsg.setMessageType("text");
-        aiMsg.setTaskType(taskType == null || taskType.isEmpty() ? "shopping" : taskType);
-        aiMsg.setStatus(STATUS_TRUNCATED);
-        aiMsg.setStoppedReason(stoppedReason);
-        aiMsg.setStoppedAt(LocalDateTime.now());
-        if (productCards != null && !productCards.isEmpty()) aiMsg.setProductCards(productCards);
-        if (confirmCard != null) aiMsg.setConfirmCard(confirmCard);
-        if (cartSelection != null) aiMsg.setCartSelection(cartSelection);
-        aiMsg.setCreateTime(LocalDateTime.now());
-        msgMapper.insert(aiMsg);
-        log.info("persisted truncated assistant conv={} id={} reason={} len={}",
-                conversationId, aiMsg.getId(), stoppedReason, content.length());
-        return aiMsg.getId();
     }
 
     // ---------- 私有 ----------

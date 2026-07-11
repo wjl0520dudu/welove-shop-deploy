@@ -20,13 +20,13 @@ public interface MessageMapper extends BaseMapper<Message> {
         SELECT * FROM chat_svc.message
         WHERE conversation_id = #{conversationId}
           AND status = 'truncated'
-          AND content LIKE CONCAT(#{contentPrefix}, '%')
-          AND stopped_at >= NOW() - (#{sinceSeconds} || ' seconds')::interval
+          AND content LIKE #{contentLike}
+          AND stopped_at >= NOW() - CAST(#{sinceSeconds} || ' seconds' AS interval)
         ORDER BY id DESC
         LIMIT 1
         """)
     Message selectRecentTruncated(@Param("conversationId") Long conversationId,
-                                  @Param("contentPrefix") String contentPrefix,
+                                  @Param("contentLike") String contentLike,
                                   @Param("sinceSeconds") int sinceSeconds);
 
     /**
