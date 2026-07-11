@@ -1,5 +1,30 @@
 import { createConversation, getConversations, getMessages } from '../api/chat'
 
+/**
+ * 把后端 Message 实体映射成前端渲染需要的统一形态。
+ * 后端 status='truncated' → 前端 stopped=true(显示「已停止」标签)。
+ */
+function hydrateServerMessage(m) {
+  const isTruncated = m && m.status === 'truncated'
+  return {
+    _localId: `s${m.id}`,
+    id: m.id,
+    conversationId: m.conversationId,
+    role: m.role,
+    content: m.content || '',
+    productCards: m.productCards || [],
+    confirmCard: m.confirmCard || null,
+    cartSelection: m.cartSelection || null,
+    taskType: m.taskType || '',
+    feedbackType: m.feedbackType || '',
+    pending: false,
+    streaming: false,
+    errored: false,
+    stopped: isTruncated,
+    stoppedReason: isTruncated ? (m.stoppedReason || 'user_abort') : ''
+  }
+}
+
 const state = {
   currentConversation: null,   // { id, title, isPinned, ... }
   conversations: [],           // 抽屉列表
@@ -53,7 +78,9 @@ export default {
     state.loadingMessages = true
     try {
       const list = await getMessages(conversation.id)
-      state.messages = Array.isArray(list) ? list : (list?.records || [])
+      // 把后端字段映射为前端渲染需要的统一形态(包含 stopped 等截断标记)
+      const raw = Array.isArray(list) ? list : (list?.records || [])
+      state.messages = raw.map(hydrateServerMessage)
       return state.messages
     } finally {
       state.loadingMessages = false

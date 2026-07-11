@@ -5,6 +5,7 @@ import com.welove.shop.chat.entity.Conversation;
 import com.welove.shop.chat.entity.Message;
 
 import java.util.List;
+import java.util.Map;
 
 public interface ChatService {
     /** 新建会话。 */
@@ -25,4 +26,14 @@ public interface ChatService {
     void updateConversation(Long conversationId, String title, Boolean isPinned);
     /** 消息反馈。 */
     void submitFeedback(FeedbackRequest request);
+    /**
+     * 前端 abort 时主动把半成品发到后端落库(status=truncated)。
+     * 与 doOnCancel 兜底共享同一去重逻辑,clientTs 用于冲突判优。
+     * 返回新插入(或已存在去重命中)的 message id。
+     */
+    Long persistTruncatedFromClient(Long userId, Long conversationId, String content,
+                                    List<Map<String, Object>> productCards,
+                                    Map<String, Object> confirmCard,
+                                    Map<String, Object> cartSelection,
+                                    String taskType, Long clientTs);
 }

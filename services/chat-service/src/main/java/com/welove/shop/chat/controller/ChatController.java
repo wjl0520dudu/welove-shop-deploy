@@ -2,6 +2,7 @@ package com.welove.shop.chat.controller;
 
 import com.welove.shop.chat.dto.ChatRequest;
 import com.welove.shop.chat.dto.FeedbackRequest;
+import com.welove.shop.chat.dto.StopMessageRequest;
 import com.welove.shop.chat.dto.StreamChatRequest;
 import com.welove.shop.chat.entity.Conversation;
 import com.welove.shop.chat.entity.Message;
@@ -58,6 +59,23 @@ public class ChatController {
     }
     @PostMapping("/messages/feedback") public Result<Void> submitFeedback(@RequestBody FeedbackRequest req) {
         chatService.submitFeedback(req); return Result.ok();
+    }
+    /**
+     * 客户端中止流时主动把半成品发到后端落库,保证刷新后仍能看到截断回复。
+     * 双保险:即便此请求因网络断开未送达,后端 Flux.doOnCancel 也会兜底写一条。
+     */
+    @PostMapping("/messages/stop") public Result<Long> stopMessage(@RequestBody StopMessageRequest req) {
+        Long messageId = chatService.persistTruncatedFromClient(
+                UserContext.requireUserId(),
+                req.getConversationId(),
+                req.getContent(),
+                req.getProductCards(),
+                req.getConfirmCard(),
+                req.getCartSelection(),
+                req.getTaskType(),
+                req.getClientTs()
+        );
+        return Result.ok(messageId);
     }
 
     /** 从请求头提取 JWT token (去 Bearer 前缀)。 */

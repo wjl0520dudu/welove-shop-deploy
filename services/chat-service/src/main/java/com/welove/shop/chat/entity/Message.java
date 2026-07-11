@@ -34,5 +34,8 @@ public class Message implements Serializable {
     private Double importanceScore;
     private String feedbackType;
     private LocalDateTime feedbackTime;
+    private String status;             // done|streaming|truncated|error
+    private String stoppedReason;      // user_abort|server_error|null
+    private LocalDateTime stoppedAt;
     private LocalDateTime createTime;
 }

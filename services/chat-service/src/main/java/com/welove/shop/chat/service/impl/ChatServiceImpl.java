@@ -34,6 +34,12 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
     private static final String DEDUP_PREFIX = "chat:dedup:";
+    private static final String STATUS_DONE = "done";
+    private static final String STATUS_TRUNCATED = "truncated";
+    private static final String STOP_USER_ABORT = "user_abort";
+    private static final String STOP_SERVER = "server_error";
+    /** 截断去重窗口(秒):同 conversation + 同 contentPrefix 在此窗口内只写一条。 */
+    private static final int TRUNC_DEDUP_SECONDS = 60;
     private final ConversationMapper convMapper;
     private final MessageMapper msgMapper;
     private final QaLogMapper qaLogMapper;
@@ -99,6 +105,16 @@ public class ChatServiceImpl implements ChatService {
                                                    String username, String jwtToken,
                                                    String gender, String skinType, java.util.List<String> preferenceTags) {
         SseEmitter emitter = new SseEmitter(sseTimeout);
+        // 用 AtomicBoolean 标记是否已正常完成,防止 doOnCancel 与 doOnComplete 同时触发写库双写。
+        java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // 把流式累积容器提升到闭包外,使 doOnCancel / doOnError / doOnComplete 都能访问。
+        StringBuilder answerBuilder = new StringBuilder();
+        String[] taskType = {""};
+        java.util.List<Map<String, Object>>[] productCards = new java.util.List[]{new java.util.ArrayList<>()};
+        Map<String, Object>[] confirmCard = new Map[]{null};
+        Map<String, Object>[] cartSelection = new Map[]{null};
+        String[] sources = {""};
+
         CompletableFuture.runAsync(() -> {
             try {
                 if (isDuplicate(conversationId, content)) { emitter.complete(); return; }
@@ -116,14 +132,6 @@ public class ChatServiceImpl implements ChatService {
                 if (gender != null) aiBody.put("gender", gender);
                 if (skinType != null) aiBody.put("skin_type", skinType);
                 if (preferenceTags != null) aiBody.put("preference_tags", preferenceTags);
-
-                // SSE 事件收集 (数组引用供 lambda 内修改)
-                StringBuilder answerBuilder = new StringBuilder();
-                String[] taskType = {""};
-                java.util.List<Map<String, Object>>[] productCards = new java.util.List[]{new java.util.ArrayList<>()};
-                Map<String, Object>[] confirmCard = new Map[]{null};
-                Map<String, Object>[] cartSelection = new Map[]{null};
-                String[] sources = {""};
 
                 // WebClient 对 text/event-stream 会自动解码 SSE，用 ServerSentEvent<String>
                 // 直接拿到事件名 event() 与已解码的 data 载荷，避免手工按物理行拆帧(会丢事件名)。
@@ -183,6 +191,7 @@ public class ChatServiceImpl implements ChatService {
                         log.warn("SSE parse failed: {}", e.getMessage());
                     }
                 }).doOnComplete(() -> {
+                    if (!finalized.compareAndSet(false, true)) return;
                     try {
                         String answer = answerBuilder.toString();
                         // 持久化 AI 消息(含 productCards / confirmCard / cartSelection)
@@ -192,6 +201,7 @@ public class ChatServiceImpl implements ChatService {
                         aiMsg.setContent(answer.isEmpty() ? "AI 暂时无法回复,请稍后再试" : answer);
                         aiMsg.setMessageType("text");
                         aiMsg.setTaskType(taskType[0].isEmpty() ? "shopping" : taskType[0]);
+                        aiMsg.setStatus(STATUS_DONE);
                         if (!productCards[0].isEmpty()) {
                             aiMsg.setProductCards(productCards[0]);
                         }
@@ -215,10 +225,32 @@ public class ChatServiceImpl implements ChatService {
                         emitter.complete();
                     }
                 }).doOnError(e -> {
+                    if (!finalized.compareAndSet(false, true)) {
+                        // 已被 doOnCancel 截走(客户端断开通常走 doOnCancel 路径),此处只关流。
+                        emitter.complete();
+                        return;
+                    }
                     log.error("SSE stream error", e);
+                    // 落库 status=error,保留已收 token
+                    String answer = answerBuilder.toString();
+                    Long errId = persistTruncatedInternal(conversationId, answer,
+                            productCards[0], confirmCard[0], cartSelection[0],
+                            taskType[0], STOP_SERVER);
                     try {
-                        emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                        Map<String, Object> payload = new java.util.HashMap<>();
+                        payload.put("content", String.valueOf(e.getMessage()));
+                        if (errId != null) payload.put("messageId", errId);
+                        emitter.send(SseEmitter.event().name("error").data(payload));
                     } catch (IOException ex) { }
+                    emitter.complete();
+                }).doOnCancel(() -> {
+                    // 客户端断开 → 双保险之一:把已收 token 持久化为 truncated
+                    if (!finalized.compareAndSet(false, true)) return;
+                    log.info("SSE stream canceled (client disconnected), persist truncated conv={}", conversationId);
+                    persistTruncatedInternal(conversationId, answerBuilder.toString(),
+                            productCards[0], confirmCard[0], cartSelection[0],
+                            taskType[0], STOP_USER_ABORT);
+                    // 客户端已断开,emitter.send() 必然抛异常,此处不补发任何事件,只关闭即可
                     emitter.complete();
                 }).subscribe();
             } catch (Exception e) {
@@ -244,6 +276,55 @@ public class ChatServiceImpl implements ChatService {
                             .orderByDesc(QaLog::getCreateTime).last("LIMIT 1"));
             if (!logs.isEmpty()) { QaLog l = logs.get(0); l.setFeedbackType(req.getFeedbackType()); l.setFeedbackTime(LocalDateTime.now()); qaLogMapper.updateById(l); }
         }
+    }
+
+    // ---------- 截断持久化（双保险：前端 POST + 后端 doOnCancel） ----------
+    @Override @Transactional public Long persistTruncatedFromClient(Long userId, Long conversationId, String content,
+                                                                     List<Map<String, Object>> productCards,
+                                                                     Map<String, Object> confirmCard,
+                                                                     Map<String, Object> cartSelection,
+                                                                     String taskType, Long clientTs) {
+        return persistTruncatedInternal(conversationId, content, productCards, confirmCard, cartSelection, taskType, STOP_USER_ABORT);
+    }
+
+    /**
+     * 截断消息落库,被前端 stop 接口与后端 Flux.doOnCancel 共用。
+     * 去重策略:同 conversation + 同 content 前缀 + 60s 内已有 truncated 记录 → 跳过。
+     * 返回新插入(或去重命中已存在)的 message id;content 为空时跳过(避免空消息)。
+     */
+    private Long persistTruncatedInternal(Long conversationId, String content,
+                                          List<Map<String, Object>> productCards,
+                                          Map<String, Object> confirmCard,
+                                          Map<String, Object> cartSelection,
+                                          String taskType, String stoppedReason) {
+        if (content == null || content.isEmpty()) {
+            // 空内容不写 assistant 行(刚启动就 abort 时常见)。
+            log.info("skip persist truncated: empty content conv={}", conversationId);
+            return null;
+        }
+        String prefix = content.length() > 32 ? content.substring(0, 32) : content;
+        Message dup = msgMapper.selectRecentTruncated(conversationId, prefix, TRUNC_DEDUP_SECONDS);
+        if (dup != null) {
+            log.info("truncated dedup hit, skip insert conv={} existingId={}", conversationId, dup.getId());
+            return dup.getId();
+        }
+        Message aiMsg = new Message();
+        aiMsg.setConversationId(conversationId);
+        aiMsg.setRole("assistant");
+        aiMsg.setContent(content);
+        aiMsg.setMessageType("text");
+        aiMsg.setTaskType(taskType == null || taskType.isEmpty() ? "shopping" : taskType);
+        aiMsg.setStatus(STATUS_TRUNCATED);
+        aiMsg.setStoppedReason(stoppedReason);
+        aiMsg.setStoppedAt(LocalDateTime.now());
+        if (productCards != null && !productCards.isEmpty()) aiMsg.setProductCards(productCards);
+        if (confirmCard != null) aiMsg.setConfirmCard(confirmCard);
+        if (cartSelection != null) aiMsg.setCartSelection(cartSelection);
+        aiMsg.setCreateTime(LocalDateTime.now());
+        msgMapper.insert(aiMsg);
+        log.info("persisted truncated assistant conv={} id={} reason={} len={}",
+                conversationId, aiMsg.getId(), stoppedReason, content.length());
+        return aiMsg.getId();
     }
 
     // ---------- 私有 ----------

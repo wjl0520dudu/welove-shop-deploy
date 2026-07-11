@@ -91,6 +91,10 @@ async def stream_assistant(request: AssistantRunRequest, http_request: Request):
     事件类型：start / route / token / tool_call / tool_result / final / error / done。
     详见 assistant/graph.py::astream。
 
+    客户端断开检测：每次 yield 前用 Starlette 自带的 `request.is_disconnected()`
+    嗅探一次,提前终止 graph.astream,避免 LLM 继续空转烧 token。
+    不影响 chat-service 的 doOnCancel 落库语义,仅作为成本侧优化。
+
     前端使用示例：
         const es = new EventSource('/api/assistant/stream', ...)
         es.addEventListener('token', e => append(JSON.parse(e.data).content))
@@ -120,6 +124,13 @@ async def stream_assistant(request: AssistantRunRequest, http_request: Request):
                 jwt_token=request.jwt_token,
                 trace_id=trace_id,
             ):
+                # 客户端断开后提前停 LLM,避免空跑 token
+                if await http_request.is_disconnected():
+                    logger.info(
+                        "client disconnected, abort astream trace=%s conv=%s",
+                        trace_id, request.conversation_id,
+                    )
+                    break
                 yield _sse_frame(event["type"], event.get("data") or {}).encode("utf-8")
         except Exception as e:  # noqa: BLE001
             logger.exception("Assistant stream failed")

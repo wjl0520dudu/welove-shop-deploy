@@ -107,6 +107,7 @@ import {
   sendMessage,
   getMessages,
   feedback as feedbackApi,
+  stopStream,
   updateConversation as updateConversationApi,
   deleteConversation as deleteConversationApi
 } from '../../api/chat'
@@ -365,8 +366,13 @@ export default {
         if (assistant.streaming) this.finishStream(assistant, {}, conversationId)
       } catch (err) {
         if (err && err.name === 'AbortError') {
+          // 用户主动中止:保留已收 token,标 stopped,主动把半成品发给后端落库。
+          // 网络通时由 stopStream 写库;网络断时由后端 Flux.doOnCancel 兜底;SQL 去重避免重复。
           assistant.pending = false
           assistant.streaming = false
+          assistant.stopped = true
+          assistant.stoppedReason = 'user_abort'
+          this.persistStoppedSnapshot(conversationId, assistant)
           this.setStreaming(false)
           return
         }
@@ -438,6 +444,29 @@ export default {
         this.streamHandle = null
       }
     },
+    /**
+     * 把当前 assistant 半成品快照发给后端落库(status=truncated)。
+     * 仅在前端 AbortError 路径调用;失败也不抛错(后端 doOnCancel 会兜底)。
+     */
+    persistStoppedSnapshot(conversationId, assistant) {
+      if (!conversationId) return
+      const payload = {
+        conversationId,
+        content: assistant.content || '',
+        productCards: assistant.productCards && assistant.productCards.length ? assistant.productCards : null,
+        confirmCard: assistant.confirmCard || null,
+        cartSelection: assistant.cartSelection || null,
+        taskType: assistant.taskType || '',
+        clientTs: Date.now()
+      }
+      stopStream(payload)
+        .then((messageId) => {
+          if (messageId) assistant.id = messageId
+        })
+        .catch(() => {
+          // 静默失败,后端 Flux.doOnCancel 已兜底,UI 不阻塞
+        })
+    },
     retryMessage(message) {
       if (this.streaming) return
       const idx = this.messages.indexOf(message)
@@ -447,6 +476,8 @@ export default {
       }
       if (!userContent) return
       message.errored = false
+      message.stopped = false
+      message.stoppedReason = ''
       message.pending = true
       message.streaming = true
       message.content = ''
@@ -590,10 +621,14 @@ export default {
         pending: false,
         streaming: false,
         errored: false,
+        stopped: false,
+        stoppedReason: '',
         ...fields
       }
     },
     hydrateServerMessage(m) {
+      // 后端 status='truncated' 在前端映射为 stopped,刷新/切回时仍能看到「已停止」标签
+      const isTruncated = m.status === 'truncated'
       return {
         _localId: `s${m.id}`,
         id: m.id,
@@ -607,7 +642,9 @@ export default {
         feedbackType: m.feedbackType || '',
         pending: false,
         streaming: false,
-        errored: false
+        errored: false,
+        stopped: isTruncated,
+        stoppedReason: isTruncated ? (m.stoppedReason || 'user_abort') : ''
       }
     },
     scrollToBottom() {

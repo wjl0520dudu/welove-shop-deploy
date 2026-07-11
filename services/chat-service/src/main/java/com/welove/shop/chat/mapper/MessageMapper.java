@@ -3,7 +3,37 @@ package com.welove.shop.chat.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.welove.shop.chat.entity.Message;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
 
 @Mapper
 public interface MessageMapper extends BaseMapper<Message> {
+
+    /**
+     * 去重查询:同一 conversation 下,近 N 秒内 status='truncated' 且内容前缀匹配的截断消息。
+     * 用于双保险(前端 POST + 后端 doOnCancel)时避免同一条截断被写入两次。
+     * 用 LIKE 前缀匹配即可,因为流式中断时两端持有的 content 应是同一前缀。
+     */
+    @Select("""
+        SELECT * FROM chat_svc.message
+        WHERE conversation_id = #{conversationId}
+          AND status = 'truncated'
+          AND content LIKE CONCAT(#{contentPrefix}, '%')
+          AND stopped_at >= NOW() - (#{sinceSeconds} || ' seconds')::interval
+        ORDER BY id DESC
+        LIMIT 1
+        """)
+    Message selectRecentTruncated(@Param("conversationId") Long conversationId,
+                                  @Param("contentPrefix") String contentPrefix,
+                                  @Param("sinceSeconds") int sinceSeconds);
+
+    /**
+     * 包装为 List 返回,符合 BaseMapper 风格的 collection 语义,避免单对象判空的歧义。
+     */
+    default java.util.List<Message> selectRecentTruncatedAsList(Long conversationId, String contentPrefix, int sinceSeconds) {
+        Message m = selectRecentTruncated(conversationId, contentPrefix, sinceSeconds);
+        return m == null ? java.util.Collections.emptyList() : java.util.List.of(m);
+    }
 }

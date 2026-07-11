@@ -33,6 +33,18 @@ export function feedback(messageId, feedbackType) {
 }
 
 /**
+ * 中止流式时把已收到的半成品发到后端落库（豆包式体验）。
+ * 后端 ChatServiceImpl.persistTruncatedFromClient 会写入 status='truncated' 的 assistant 消息,
+ * 配合 doOnCancel 兜底,保证双保险(网络通则前端落库,网络断则后端兜底,SQL 去重避免重复)。
+ *
+ * @param {object} payload { conversationId, content, productCards?, confirmCard?, cartSelection?, taskType?, clientTs? }
+ * @returns {Promise<number|null>} 新插入(或去重命中)的 message id
+ */
+export function stopStream(payload = {}) {
+  return request({ url: '/api/chat/chat/messages/stop', method: 'POST', data: { ...payload, clientTs: payload.clientTs || Date.now() } })
+}
+
+/**
  * 流式发送消息（SSE）
  *
  * uni.request 无法流式，故走 fetch + ReadableStream，手动注入 Bearer。
