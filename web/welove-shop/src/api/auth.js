@@ -16,5 +16,6 @@ export function updateProfile(data) {
   return request({ url: '/api/user/auth/update', method: 'POST', data })
 }
 export function changePassword(data) {
-  return request({ url: '/api/user/auth/changePassword', method: 'POST', data })
+  // 微服务未提供独立改密接口，改密走 update 携带 password 字段
+  return request({ url: '/api/user/auth/update', method: 'POST', data })
 }

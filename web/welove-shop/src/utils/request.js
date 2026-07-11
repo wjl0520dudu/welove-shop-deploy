@@ -1,6 +1,7 @@
 import { clearAuth, getRefreshToken, getToken, setRefreshToken, setStoredUser, setToken } from './auth'
+import { API_BASE_URL } from '../config/env'
 
-const BASE_URL = ''
+const BASE_URL = API_BASE_URL
 let refreshingPromise = null
 let loginNavigating = false
 
@@ -31,7 +32,7 @@ function readToken(data = {}) {
   return data.token || data.accessToken || ''
 }
 
-async function refreshAccessToken() {
+export async function refreshAccessToken() {
   const refreshToken = getRefreshToken()
   if (!refreshToken) return false
 

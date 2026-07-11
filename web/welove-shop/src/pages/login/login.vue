@@ -4,7 +4,7 @@
       <view class="brand-mark">
         <uni-icons type="shop" size="30" color="#ffffff" />
       </view>
-      <text class="brand-name">ShopAgent-X</text>
+      <text class="brand-name">WeLoveShop</text>
       <text class="brand-desc">用手机号登录，继续你的智能导购体验</text>
     </view>
 

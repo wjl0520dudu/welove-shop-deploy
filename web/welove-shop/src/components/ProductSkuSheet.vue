@@ -105,6 +105,7 @@ export default {
   display: flex;
   align-items: flex-end;
   background: rgba(15, 23, 42, 0.42);
+  animation: sku-mask-in 0.24s ease;
 }
 .sheet {
   width: 100%;
@@ -112,6 +113,15 @@ export default {
   padding: 18rpx 24rpx 34rpx;
   border-radius: 28rpx 28rpx 0 0;
   background: #ffffff;
+  animation: sku-sheet-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes sku-mask-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sku-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 .handle {
   width: 72rpx;

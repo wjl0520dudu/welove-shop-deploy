@@ -1,4 +1,6 @@
-const BASE_URL = 'http://localhost:8888'
+import { IMAGE_BASE_URL } from '../config/env'
+
+const BASE_URL = IMAGE_BASE_URL
 const FILE_NAME_PATTERN = /^[^/]+\.(png|jpe?g|webp|gif|bmp|svg)$/i
 
 function encodePath(url) {
@@ -12,10 +14,18 @@ function encodePath(url) {
   }).join('/')
 }
 
+function imageAuthority() {
+  const match = /^https?:\/\/([^/]+)/.exec(BASE_URL)
+  return match ? match[1] : ''
+}
+
 function normalizeAbsoluteUrl(url) {
+  const authority = imageAuthority()
+  if (!authority) return url
+  // 兼容历史数据：把指向网关端口的绝对图片地址改写到图片主机
   return url
-    .replace('localhost:8080', 'localhost:8888')
-    .replace('127.0.0.1:8080', '127.0.0.1:8888')
+    .replace('localhost:8080', authority)
+    .replace('127.0.0.1:8080', authority)
 }
 
 export function buildImageUrl(url) {

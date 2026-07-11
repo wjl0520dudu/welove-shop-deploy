@@ -21,6 +21,10 @@ export function getCartList() {
 export function getCartCount() {
   return request({ url: '/api/trade/cart/count', method: 'GET' })
 }
+/**
+ * 全选/取消全选 —— 微服务未实现服务端接口，选中状态由前端本地维护。
+ * 保留同名方法以兼容调用方，直接返回已完成的 Promise，不产生网络请求。
+ */
 export function checkAll(checked) {
-  return request({ url: '/api/trade/cart/checkAll', method: 'POST', data: { checked }, header: { 'content-type': 'application/x-www-form-urlencoded' } })
+  return Promise.resolve({ checked })
 }
