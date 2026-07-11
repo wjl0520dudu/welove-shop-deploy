@@ -49,12 +49,14 @@ import userStore from '../../store/user'
 import { getOrderList } from '../../api/order'
 import { getFavoriteList, getBrowseHistory } from '../../api/recommend'
 import { requireLogin } from '../../utils/routeGuard'
+import { getProfile } from '../../api/auth'
 
 export default {
   data() {
     return {
       user: userStore.state.user,
       loggedIn: userStore.isLoggedIn(),
+      validating: false,
       stats: { favorite: 0, history: 0, order: 0 },
       menus: [
         { text: '我的订单', icon: 'list', url: '/pages/order-list/order-list' },
@@ -76,15 +78,32 @@ export default {
   onShow() {
     this.refreshLocalUser()
     if (this.loggedIn) {
-      this.loadProfile()
-      this.loadStats()
+      this.validateAndLoad()
     } else {
       this.stats = { favorite: 0, history: 0, order: 0 }
     }
   },
   methods: {
     refreshLocalUser() { userStore.restore(); this.user = userStore.state.user; this.loggedIn = userStore.isLoggedIn() },
-    async loadProfile() { try { await userStore.loadProfile(); this.refreshLocalUser() } catch (error) { this.refreshLocalUser() } },
+    async validateAndLoad() {
+      this.validating = true
+      try {
+        await getProfile()
+        this.refreshLocalUser()
+        this.loadStats()
+      } catch (error) {
+        const msg = error?.message || ''
+        // 401/403/过期/拒绝访问等情况一律视为登录失效，清除状态
+        if (msg.includes('401') || msg.includes('403') || msg.includes('expire') || msg.includes('登录') || msg.includes('denied') || msg.includes('reject')) {
+          userStore.logout()
+          this.refreshLocalUser()
+          uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' })
+        }
+        this.stats = { favorite: 0, history: 0, order: 0 }
+      } finally {
+        this.validating = false
+      }
+    },
     async loadStats() {
       const [orders, favorites, histories] = await Promise.allSettled([
         getOrderList({ page: 1, size: 1 }), getFavoriteList(), getBrowseHistory()

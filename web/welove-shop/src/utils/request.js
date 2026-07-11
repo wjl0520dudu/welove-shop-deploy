@@ -1,5 +1,6 @@
 import { clearAuth, getRefreshToken, getToken, setRefreshToken, setStoredUser, setToken } from './auth'
 import { API_BASE_URL } from '../config/env'
+import userStore from '../store/user'
 
 const BASE_URL = API_BASE_URL
 let refreshingPromise = null
@@ -65,18 +66,18 @@ function currentPagePath() {
   return pages.length ? `/${pages[pages.length - 1].route}` : ''
 }
 
-function redirectToLogin() {
+function redirectToLogin(reason = '登录已过期，请重新登录') {
   const current = currentPagePath()
   if (current === '/pages/login/login' || current === '/pages/login-code/login-code') return
   clearAuth()
+  userStore.logout()
   if (loginNavigating) return
   loginNavigating = true
   const query = current ? `?redirect=${encodeURIComponent(current)}` : ''
   uni.navigateTo({
     url: `/pages/login/login${query}`,
-    complete() {
-      setTimeout(() => { loginNavigating = false }, 300)
-    }
+    fail() { loginNavigating = false },
+    complete() { setTimeout(() => { loginNavigating = false }, 300) }
   })
 }
 
