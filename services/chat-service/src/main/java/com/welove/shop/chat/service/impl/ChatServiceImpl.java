@@ -125,34 +125,30 @@ public class ChatServiceImpl implements ChatService {
                 Map<String, Object>[] cartSelection = new Map[]{null};
                 String[] sources = {""};
 
-                Flux<String> flux = webClient.post().uri("/assistant/stream").bodyValue(aiBody)
-                        .retrieve().bodyToFlux(String.class);
+                // WebClient 对 text/event-stream 会自动解码 SSE，用 ServerSentEvent<String>
+                // 直接拿到事件名 event() 与已解码的 data 载荷，避免手工按物理行拆帧(会丢事件名)。
+                org.springframework.core.ParameterizedTypeReference<org.springframework.http.codec.ServerSentEvent<String>> sseType =
+                        new org.springframework.core.ParameterizedTypeReference<>() {};
+                Flux<org.springframework.http.codec.ServerSentEvent<String>> flux = webClient.post()
+                        .uri("/assistant/stream")
+                        .accept(org.springframework.http.MediaType.TEXT_EVENT_STREAM)
+                        .bodyValue(aiBody)
+                        .retrieve().bodyToFlux(sseType);
 
-                flux.doOnNext(line -> {
+                flux.doOnNext(sse -> {
                     try {
-                        // 跳过 SSE 空行 / 注释行
-                        if (line.isEmpty() || line.startsWith(":")) return;
-                        // 解析 SSE 帧: event: xxx\ndata: {...}
-                        String eventType = "message";
-                        String data = line;
-                        if (line.startsWith("event: ")) {
-                            eventType = line.substring(7).trim();
-                            data = null; // data 在下一帧
-                        } else if (line.startsWith("data: ")) {
-                            data = line.substring(6);
-                        }
-                        if (data == null) return;
+                        String eventType = sse.event() != null ? sse.event() : "message";
+                        String data = sse.data();
+                        if (data == null || data.isEmpty()) return;
 
-                        // 解析 data JSON
+                        // 透传给前端(保留正确的事件名 + 原始 data JSON)。
+                        // 上游 done 不透传:chat-service 在 doOnComplete 统一补发带 messageId 的 done,避免前端收到两个 done。
+                        if (!"done".equals(eventType)) {
+                            emitter.send(SseEmitter.event().name(eventType).data(data));
+                        }
+
+                        // 解析 data JSON 用于持久化收集
                         Map<String, Object> event = objectMapper.readValue(data, Map.class);
-                        if (event.containsKey("type") && eventType.equals("message")) {
-                            eventType = String.valueOf(event.get("type"));
-                        }
-
-                        // 透传给前端(保持原始 SSE 帧)
-                        emitter.send(SseEmitter.event().name(eventType).data(data));
-
-                        // 按事件类型收集数据
                         switch (eventType) {
                             case "token":
                                 answerBuilder.append(event.getOrDefault("content", ""));
@@ -161,28 +157,22 @@ public class ChatServiceImpl implements ChatService {
                                 if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                                 break;
                             case "final":
-                                // 最终事件: 提取 answer / productCards / confirmCard / cartSelection
-                                if (event.containsKey("content") && answerBuilder.length() == 0) {
-                                    answerBuilder.append(event.get("content"));
+                                // ai-service 的 final data 即完整 AIResponse，字段在顶层(非嵌套 response)
+                                if (answerBuilder.length() == 0 && event.containsKey("answer")) {
+                                    answerBuilder.append(event.get("answer"));
                                 }
-                                Map<String, Object> response = (Map<String, Object>) event.get("response");
-                                if (response != null) {
-                                    if (response.containsKey("answer") && answerBuilder.length() == 0) {
-                                        answerBuilder.append(response.get("answer"));
-                                    }
-                                    if (response.containsKey("task_type")) taskType[0] = String.valueOf(response.get("task_type"));
-                                    if (response.containsKey("product_cards")) {
-                                        productCards[0] = (java.util.List<Map<String, Object>>) response.get("product_cards");
-                                    }
-                                    if (response.containsKey("confirm_card")) {
-                                        confirmCard[0] = (Map<String, Object>) response.get("confirm_card");
-                                    }
-                                    if (response.containsKey("cart_selection")) {
-                                        cartSelection[0] = (Map<String, Object>) response.get("cart_selection");
-                                    }
-                                    if (response.containsKey("sources")) {
-                                        sources[0] = objectMapper.writeValueAsString(response.get("sources"));
-                                    }
+                                if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                                if (event.get("product_cards") instanceof java.util.List<?> pc) {
+                                    productCards[0] = (java.util.List<Map<String, Object>>) pc;
+                                }
+                                if (event.get("confirm_card") instanceof Map<?, ?> cc) {
+                                    confirmCard[0] = (Map<String, Object>) cc;
+                                }
+                                if (event.get("cart_selection") instanceof Map<?, ?> cs) {
+                                    cartSelection[0] = (Map<String, Object>) cs;
+                                }
+                                if (event.containsKey("sources")) {
+                                    sources[0] = objectMapper.writeValueAsString(event.get("sources"));
                                 }
                                 break;
                             case "error":

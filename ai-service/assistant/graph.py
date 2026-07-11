@@ -4,7 +4,7 @@ import logging
 from typing import Any, AsyncIterator, Dict
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from agents.memory import get_business_memory
@@ -172,8 +172,9 @@ class AssistantGraph:
         ):
             # 兼容 subgraphs=True/False 两种输出结构
             if isinstance(chunk, tuple) and len(chunk) == 3:
-                _namespace, mode, payload = chunk
+                namespace, mode, payload = chunk
             elif isinstance(chunk, tuple) and len(chunk) == 2:
+                namespace = ()
                 mode, payload = chunk
             else:
                 continue
@@ -181,7 +182,7 @@ class AssistantGraph:
             if mode == "messages":
                 # payload = (message_chunk, metadata_dict)
                 msg_chunk, meta = payload
-                async for event in self._translate_message_event(msg_chunk, meta):
+                async for event in self._translate_message_event(msg_chunk, meta, namespace):
                     yield event
 
             elif mode == "updates":
@@ -201,12 +202,20 @@ class AssistantGraph:
         # done 事件：前端可关流
         yield {"type": "done", "data": {}}
 
-    async def _translate_message_event(self, msg_chunk, meta) -> AsyncIterator[Dict[str, Any]]:
+    async def _translate_message_event(
+        self,
+        msg_chunk,
+        meta,
+        namespace=(),
+    ) -> AsyncIterator[Dict[str, Any]]:
         """把 messages 流的 AIMessageChunk 翻译成 token 事件。"""
-        # 只关心 AI 的增量 token。ToolMessage / HumanMessage 走 updates 处理。
-        if not isinstance(msg_chunk, (AIMessage, AIMessageChunk)):
+        # 只流式 LLM 的增量 chunk（AIMessageChunk）。节点写回 state 的完整 AIMessage 会被
+        # messages 流再整段发一次，与已逐 token 流过的内容重复（答案发两遍），这里跳过。
+        if not isinstance(msg_chunk, AIMessageChunk):
             return
         content = getattr(msg_chunk, "content", "")
+        if self._should_suppress_token(meta, namespace, content):
+            return
         # content 可能是 str，也可能是 list（多模态 / tool_call 结构）
         if isinstance(content, str) and content:
             yield {"type": "token", "data": {"content": content}}
@@ -214,6 +223,33 @@ class AssistantGraph:
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
                     yield {"type": "token", "data": {"content": part["text"]}}
+
+    def _should_suppress_token(self, meta, namespace, content: Any) -> bool:
+        """过滤不应展示给用户的 messages 流片段。"""
+        meta = meta or {}
+        namespace = namespace or ()
+
+        # 内部结构化调用（如槽位抽取 with_structured_output）会打 ai_internal tag。
+        # 不同 LangChain/LangGraph 版本可能把 tags 放在顶层或 metadata/config 下，统一兼容。
+        tags = _collect_tags(meta)
+        if "ai_internal" in tags:
+            return True
+
+        # Tool 节点里的内部 LLM 调用不应进入聊天气泡；否则会把 ShoppingNeed JSON
+        # 之类的中间产物按 token 泄漏给前端。
+        graph_node = str(meta.get("langgraph_node") or "")
+        graph_path = _flatten_namespace(meta.get("langgraph_path") or ())
+        namespace_text = " ".join(_flatten_namespace(namespace))
+        if graph_node in {"tools", "tool"} or "tools" in graph_path or "tools" in namespace_text:
+            return True
+
+        # 主图业务节点返回的 {"messages": [AIMessage(content=完整答案)]} 会被 messages
+        # stream 再发一次；这个片段不是 LLM 增量，而是节点回写的完整答案，必须过滤。
+        main_nodes = {"shopping", "knowledge", "chitchat", "unknown", "format_response", "route_intent"}
+        if not namespace and graph_node in main_nodes:
+            return True
+
+        return False
 
     async def _translate_update_event(self, node_name: str, node_output) -> AsyncIterator[Dict[str, Any]]:
         """把 updates 流翻译成 route / tool_call / tool_result 事件。"""
@@ -235,3 +271,29 @@ class AssistantGraph:
         # subgraphs=True 时子图消息会在 messages 流里冒泡，这里 updates 流一般看不到。
         # 保留结构，未来如果有主图直接调工具的场景可以在这里补充。
         _ = node_name  # 静默 lint
+
+
+def _collect_tags(meta: Dict[str, Any]) -> set[str]:
+    tags: set[str] = set()
+    stack = [meta]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, value in item.items():
+                if key == "tags" and isinstance(value, (list, tuple, set)):
+                    tags.update(str(v) for v in value)
+                elif key in {"metadata", "config"} and isinstance(value, dict):
+                    stack.append(value)
+        elif isinstance(item, (list, tuple, set)):
+            tags.update(str(v) for v in item)
+    return tags
+
+
+def _flatten_namespace(value: Any) -> list[str]:
+    out: list[str] = []
+    if isinstance(value, (list, tuple, set)):
+        for part in value:
+            out.extend(_flatten_namespace(part))
+    elif value is not None:
+        out.append(str(value))
+    return out

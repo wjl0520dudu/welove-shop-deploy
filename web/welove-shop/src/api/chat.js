@@ -101,6 +101,23 @@ function dispatchChatEvent({ event, data }, cb) {
     case 'task_type':
       cb.onRouted && cb.onRouted((obj && (obj.taskType || obj.task_type)) || obj)
       break
+    case 'final': {
+      // final 携带完整响应：在此提取卡片/路由。
+      // 文本已由 token 增量给出，这里不再重复追加，避免答案显示两遍；
+      // 仅在没有任何 token 文本时，由页面用 onFinalText 兜底补全（见 chat.vue）。
+      if (obj) {
+        const cards = obj.product_cards || obj.productCards
+        if (cards && cards.length) cb.onProductCards && cb.onProductCards(toArray(cards))
+        const confirm = obj.confirm_card || obj.confirmCard
+        if (confirm) cb.onConfirm && cb.onConfirm(confirm)
+        const cart = obj.cart_selection || obj.cartSelection
+        if (cart) cb.onCartSelection && cb.onCartSelection(cart)
+        const t = obj.task_type || obj.taskType
+        if (t) cb.onRouted && cb.onRouted(t)
+        cb.onFinalText && cb.onFinalText(obj.answer || obj.content || '')
+      }
+      break
+    }
     case 'end':
     case 'done':
     case 'complete':

@@ -256,7 +256,7 @@ export default {
         })
         uni.showToast({ title: '订单已创建', icon: 'none' })
         await this.cleanupCheckedCartItems()
-        cartStore.refreshCount().catch(() => {})
+        cartStore.refreshAndSyncBadge().catch(() => {})
         const orderId = order?.id || order?.orderId
         setTimeout(() => {
           if (orderId) uni.redirectTo({ url: `/pages/order-detail/order-detail?id=${orderId}` })

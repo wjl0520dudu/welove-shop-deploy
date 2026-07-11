@@ -101,7 +101,10 @@ async def _parse_need_llm(
             [
                 {"role": "system", "content": _PARSE_NEED_SYSTEM},
                 {"role": "user", "content": user_msg},
-            ]
+            ],
+            # 标记为内部调用：其结构化 JSON 输出不应作为 token 流给前端。
+            # graph.astream 的 messages 流会据此 tag 过滤，避免槽位抽取 JSON 泄漏到聊天框。
+            config={"tags": ["ai_internal"]},
         )
         return result if isinstance(result, ShoppingNeed) else ShoppingNeed()
     except Exception:  # noqa: BLE001

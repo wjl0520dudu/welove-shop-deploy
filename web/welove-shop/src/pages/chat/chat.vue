@@ -311,10 +311,13 @@ export default {
 
       const assistant = this.makeMessage({ role: 'assistant', content: '', pending: true, streaming: true })
       this.messages.push(assistant)
+      // Vue3: push 进响应式数组后，须取回数组内的响应式代理再改，
+      // 否则改的是裸对象引用，不会触发重渲染（流式 token 收到了但聊天框不刷新）。
+      const reactiveAssistant = this.messages[this.messages.length - 1]
       this.setStreaming(true)
       this.scrollToBottom()
 
-      await this.runStream(conv.id, content, assistant, true)
+      await this.runStream(conv.id, content, reactiveAssistant, true)
     },
     async runStream(conversationId, content, assistant, allowAuthRetry) {
       if (!supportsEventStream()) {
@@ -337,6 +340,15 @@ export default {
         onConfirm: (card) => { assistant.confirmCard = card || null; this.scrollToBottom() },
         onCartSelection: (card) => { assistant.cartSelection = card || null; this.scrollToBottom() },
         onRouted: (t) => { assistant.taskType = t || '' },
+        // final 兜底：若某类回复没有逐 token 流（如 unknown/error 静态回复），用 final 的完整答案补上
+        onFinalText: (text) => {
+          if (text && !gotText) {
+            assistant.pending = false
+            assistant.content = text
+            gotText = true
+            this.scrollToBottom()
+          }
+        },
         onDone: (data) => { this.finishStream(assistant, data, conversationId) },
         onError: () => {
           assistant.pending = false
@@ -445,11 +457,11 @@ export default {
 
     /* ---------- 商品卡 / 加购 ---------- */
     onProductOpen(product) {
-      const id = product.id || product.productId
+      const id = product.id || product.productId || product.product_id
       if (id) uni.navigateTo({ url: `/pages/product-detail/product-detail?id=${id}` })
     },
     async onProductAdd(product) {
-      const productId = product.id || product.productId
+      const productId = product.id || product.productId || product.product_id
       if (!productId) return
       this.pendingCartProductId = productId
       try {
@@ -471,8 +483,8 @@ export default {
     async addToCart(productId, skuId) {
       try {
         await addCart(productId, skuId)
-        const count = await cartStore.refreshCount().catch(() => null)
-        this.syncBadge(count)
+        cartStore.bump(1)
+        cartStore.refreshAndSyncBadge().catch(() => {})
         uni.showToast({ title: '已加入购物车', icon: 'success' })
       } catch (e) {
         uni.showToast({ title: '加入购物车失败', icon: 'none' })
@@ -490,15 +502,13 @@ export default {
           // 单件失败不阻断其余
         }
       }
-      const count = await cartStore.refreshCount().catch(() => null)
-      this.syncBadge(count)
+      if (ok) cartStore.bump(ok)
+      cartStore.refreshAndSyncBadge().catch(() => {})
       uni.hideLoading()
       uni.showToast({ title: ok ? `已加入 ${ok} 件` : '加入失败', icon: ok ? 'success' : 'none' })
     },
     syncBadge(count) {
-      const c = Number(count != null ? count : cartStore.state.count) || 0
-      if (c > 0) uni.setTabBarBadge({ index: 2, text: String(c > 99 ? '99+' : c) })
-      else uni.removeTabBarBadge({ index: 2 })
+      return cartStore.syncBadge(count)
     },
 
     /* ---------- 确认卡 / 反馈 ---------- */

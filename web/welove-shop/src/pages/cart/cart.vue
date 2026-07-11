@@ -275,12 +275,7 @@ export default {
     },
     syncTabBadge() {
       const count = this.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
-      cartStore.state.count = count
-      if (count > 0) {
-        uni.setTabBarBadge({ index: 2, text: String(count > 99 ? '99+' : count) })
-      } else {
-        uni.removeTabBarBadge({ index: 2 })
-      }
+      cartStore.syncBadge(count)
     },
     async openSkuSheet(item) {
       const productId = this.itemProductId(item)

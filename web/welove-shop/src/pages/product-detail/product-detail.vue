@@ -272,7 +272,8 @@ export default {
     async handleAddCart(sku) {
       try {
         await addCart(this.productId, sku?.id)
-        cartStore.refreshCount().catch(() => {})
+        cartStore.bump(1)
+        cartStore.refreshAndSyncBadge().catch(() => {})
         uni.showToast({ title: '已加入购物车', icon: 'success' })
       } catch (error) {
         uni.showToast({ title: '加入购物车失败', icon: 'none' })

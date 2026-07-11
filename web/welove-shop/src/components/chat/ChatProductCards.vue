@@ -48,14 +48,18 @@ export default {
   },
   computed: {
     normalized() {
-      return (this.products || []).map((p) => ({
-        id: p.productId || p.id,
-        title: p.title || p.name || p.productTitle || '好物推荐',
-        reason: p.reason || p.recommendReason || p.desc || '',
-        price: formatMoney(p.price ?? p.basePrice ?? p.skuPrice ?? 0),
-        image: buildImageUrl(pickProductImage(p)),
-        raw: { ...p, id: p.productId || p.id }
-      }))
+      return (this.products || []).map((p) => {
+        // ai-service 卡片字段是 product_id（下划线），兼容 productId/id 多种来源
+        const pid = p.productId || p.id || p.product_id
+        return {
+          id: pid,
+          title: p.title || p.name || p.productTitle || '好物推荐',
+          reason: p.reason || p.recommendReason || p.desc || '',
+          price: formatMoney(p.price ?? p.basePrice ?? p.base_price ?? p.skuPrice ?? 0),
+          image: buildImageUrl(pickProductImage(p)),
+          raw: { ...p, id: pid, productId: pid }
+        }
+      })
     }
   },
   watch: {
