@@ -142,6 +142,7 @@ export default {
 }
 .conv-title {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: #344054;
   font-size: 27rpx;

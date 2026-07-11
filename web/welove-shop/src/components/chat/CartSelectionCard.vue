@@ -34,7 +34,7 @@
           <text class="name">{{ item.title }}</text>
           <text v-if="item.spec" class="spec">{{ item.spec }}</text>
           <view class="price-row">
-            <text class="price">¥{{ item.price }}</text>
+            <text class="price">{{ item.price }}</text>
             <text class="qty">x{{ item.quantity }}</text>
           </view>
         </view>

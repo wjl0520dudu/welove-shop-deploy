@@ -484,7 +484,7 @@ export default {
       try {
         await addCart(productId, skuId)
         cartStore.bump(1)
-        cartStore.refreshAndSyncBadge().catch(() => {})
+        cartStore.loadCart().catch(() => {})
         uni.showToast({ title: '已加入购物车', icon: 'success' })
       } catch (e) {
         uni.showToast({ title: '加入购物车失败', icon: 'none' })
@@ -503,7 +503,7 @@ export default {
         }
       }
       if (ok) cartStore.bump(ok)
-      cartStore.refreshAndSyncBadge().catch(() => {})
+      cartStore.loadCart().catch(() => {})
       uni.hideLoading()
       uni.showToast({ title: ok ? `已加入 ${ok} 件` : '加入失败', icon: ok ? 'success' : 'none' })
     },

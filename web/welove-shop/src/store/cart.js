@@ -21,9 +21,8 @@ export default {
     return state.count
   },
   async refreshAndSyncBadge() {
-    const count = await this.refreshCount()
-    this.syncBadge(count)
-    return count
+    await this.loadCart()
+    return state.count
   },
   async loadCart() {
     const data = await getCartList()
@@ -56,6 +55,10 @@ export default {
   reset() {
     state.count = 0
     state.items = []
-    this.syncBadge(0)
+    try {
+      uni.removeTabBarBadge({ index: TAB_BAR_CART_INDEX })
+    } catch (e) {
+      // ignore
+    }
   }
 }

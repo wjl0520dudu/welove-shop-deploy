@@ -3,7 +3,7 @@
     <view class="cart-top">
       <view class="top-main">
         <text class="cart-title-main">购物车</text>
-        <text class="cart-count">({{ items.length }})</text>
+        <text class="cart-count">({{ totalItemCount }})</text>
       </view>
       <view class="manage-btn" :class="{ active: manageMode }" @tap="toggleManage">
         {{ manageMode ? '完成' : '管理' }}
@@ -142,6 +142,7 @@ export default {
   },
   computed: {
     selectedCount() { return this.items.filter((item) => this.isSelected(item)).length },
+    totalItemCount() { return this.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) },
     allSelected() { return this.items.length > 0 && this.selectedCount === this.items.length },
     totalAmount() {
       return this.items.reduce((sum, item) => {

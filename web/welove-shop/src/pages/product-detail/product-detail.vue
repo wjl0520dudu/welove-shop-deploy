@@ -273,7 +273,7 @@ export default {
       try {
         await addCart(this.productId, sku?.id)
         cartStore.bump(1)
-        cartStore.refreshAndSyncBadge().catch(() => {})
+        cartStore.loadCart().catch(() => {})
         uni.showToast({ title: '已加入购物车', icon: 'success' })
       } catch (error) {
         uni.showToast({ title: '加入购物车失败', icon: 'none' })

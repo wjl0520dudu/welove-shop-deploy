@@ -92,15 +92,19 @@ export default {
         this.refreshLocalUser()
         this.loadStats()
       } catch (error) {
-        const msg = error?.message || ''
-        // 401/403/过期/拒绝访问等情况一律视为登录失效，清除状态
-        if (msg.includes('401') || msg.includes('403') || msg.includes('expire') || msg.includes('登录') || msg.includes('denied') || msg.includes('reject')) {
+        const msg = (error?.message || '').toLowerCase()
+        // request.js 在 401/403 且刷新失败时会先 clearAuth() 再抛出错误，
+        // 此处再做一次兜底：任何包含过期/登录/未授权关键字的失败都视为登录失效，清除本地状态
+        const authFailed = msg.includes('401') || msg.includes('403') || msg.includes('expire') || msg.includes('login') || msg.includes('登录') || msg.includes('未授权') || msg.includes('未登录') || msg.includes('denied') || msg.includes('reject')
+        if (authFailed) {
           userStore.logout()
-          this.refreshLocalUser()
           uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' })
         }
         this.stats = { favorite: 0, history: 0, order: 0 }
       } finally {
+        // request.js 可能已经清除了登录态，无论成功或失败都同步一次本地数据，
+        // 避免出现「接口报 401 已跳登录，但本页还显示旧头像昵称」的情况
+        this.refreshLocalUser()
         this.validating = false
       }
     },

@@ -21,7 +21,7 @@
           <text class="title">{{ item.title }}</text>
           <text v-if="item.reason" class="reason">{{ item.reason }}</text>
           <view class="bottom">
-            <text class="price">¥{{ item.price }}</text>
+            <text class="price">{{ item.price }}</text>
             <view class="add" @tap.stop="$emit('add', item.raw)">
               <uni-icons type="cart" size="15" color="#ffffff" />
               <text>加购</text>
@@ -141,11 +141,13 @@ export default {
   display: flex;
   align-items: center;
   gap: 6rpx;
+  flex-shrink: 0;
   padding: 10rpx 18rpx;
   border-radius: 999rpx;
   background: #14b8a6;
   color: #ffffff;
   font-size: 22rpx;
   font-weight: 700;
+  white-space: nowrap;
 }
 </style>
