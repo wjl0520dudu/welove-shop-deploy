@@ -4,9 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.welove.shop.common.core.exception.BizException;
 import com.welove.shop.common.core.exception.ErrorCode;
 import com.welove.shop.user.entity.UserBrowseHistory;
+import com.welove.shop.user.feign.ProductInfoEnricher;
+import com.welove.shop.user.feign.dto.ProductDTO;
 import com.welove.shop.user.mapper.UserBrowseHistoryMapper;
 import com.welove.shop.user.service.UserBrowseHistoryService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -14,12 +17,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserBrowseHistoryServiceImpl implements UserBrowseHistoryService {
 
     private final UserBrowseHistoryMapper mapper;
+    private final ProductInfoEnricher productEnricher;
 
     @Override
     public void saveOrUpdate(UserBrowseHistory history) {
@@ -50,8 +56,27 @@ public class UserBrowseHistoryServiceImpl implements UserBrowseHistoryService {
         for (UserBrowseHistory h : all) {
             unique.putIfAbsent(h.getProductId(), h);
         }
-        // 骨架期不填充 productName/image/price,由 Feign 补齐(TODO Ph 后续)
-        return new ArrayList<>(unique.values());
+        List<UserBrowseHistory> list = new ArrayList<>(unique.values());
+        if (list.isEmpty()) return list;
+        // 批量调 product-service 补齐商品展示字段(title/imageUrl/basePrice)
+        enrichProductFields(list);
+        return list;
+    }
+
+    /**
+     * 调 Feign 拿商品基础字段并回写到 @TableField(exist=false) 的 productName/image/productPrice 上。
+     * Feign 调用由 ProductInfoEnricher 兜底:失败/为空时所有字段保持 null,前端走「商品已下架」占位。
+     */
+    private void enrichProductFields(List<UserBrowseHistory> list) {
+        Map<Long, ProductDTO> productMap = productEnricher.loadByIds(
+                list.stream().map(UserBrowseHistory::getProductId).collect(Collectors.toList()));
+        for (UserBrowseHistory h : list) {
+            ProductDTO p = productMap.get(h.getProductId());
+            if (p == null) continue;
+            h.setProductName(p.getTitle());
+            h.setProductImage(p.getImageUrl());
+            h.setProductPrice(p.getBasePrice());
+        }
     }
 
     @Override
