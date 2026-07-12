@@ -183,7 +183,8 @@ export default {
     this.scrollToBottom()
   },
   onHide() {
-    this.abortStream()
+    // 不再在 onHide 中 abort——切换窗口时 SSE 应在后台继续接收，
+    // 与豆包行为一致。只有真正离开页面（onUnload）才断开连接。
   },
   onUnload() {
     this.abortStream()
