@@ -45,6 +45,9 @@
         <fastjson2.version>2.0.51</fastjson2.version>
         <jjwt.version>0.12.6</jjwt.version>
 
+        <!-- 云存储 SDK -->
+        <aliyun-sdk-oss.version>3.17.4</aliyun-sdk-oss.version>
+
         <!-- 插件 -->
         <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
@@ -58,6 +61,7 @@
         <module>common/common-web</module>
         <module>common/common-db</module>
         <module>common/common-security</module>
+        <module>common/common-storage</module>
 
         <module>gateway</module>
 
@@ -183,6 +187,18 @@
                 <groupId>com.welove.shop</groupId>
                 <artifactId>common-security</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.welove.shop</groupId>
+                <artifactId>common-storage</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- 阿里云 OSS SDK(由 common-storage 引用,此处统一管理版本) -->
+            <dependency>
+                <groupId>com.aliyun.oss</groupId>
+                <artifactId>aliyun-sdk-oss</artifactId>
+                <version>${aliyun-sdk-oss.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -1,0 +1,30 @@
+# =====================================================================
+# common-storage 共享云存储配置(单一出处)
+# ---------------------------------------------------------------------
+# 任何 service:
+#   1. <dependency>com.welove.shop:common-storage</dependency>
+#   2. application.yml 头部加:spring.config.import: classpath:META-INF/cloud-storage-shared.yml
+# 即自动继承下面所有默认值;同名 key 可在本 service yml 里覆盖。
+#
+# 凭证(AccessKey)不在此处提供默认值,必须从 env 注入,避免误提交到 git。
+# 公共读 / CDN / Bucket 域名等"非敏感"项在此处给出默认,减少每个 service 的样板代码。
+# =====================================================================
+
+cloud:
+  storage:
+    # ---------- 凭证(必须从环境变量注入;留空 = 降级 LocalDiskStorageService) ----------
+    access-key: ${CLOUD_STORAGE_ACCESS_KEY:}
+    secret-key: ${CLOUD_STORAGE_SECRET_KEY:}
+
+    # ---------- Bucket 与地域 ----------
+    bucket:   ${CLOUD_STORAGE_BUCKET:liangwenjun}
+    endpoint: ${CLOUD_STORAGE_ENDPOINT:oss-cn-hangzhou.aliyuncs.com}
+
+    # ---------- 公共可访问的 baseUrl ----------
+    # 留空 → 默认按 https://{bucket}.{endpoint} 拼;配 CDN 时填 CDN 主机
+    # 例如:https://cdn.example.com
+    domain: ${CLOUD_STORAGE_DOMAIN:}
+
+    # ---------- 对象 key 前缀(便于 Bucket 内按服务归类) ----------
+    # 默认空,业务侧 service 在自己 yml 里覆盖,如 chat-service 配 chat/
+    key-prefix: ${CLOUD_STORAGE_KEY_PREFIX:}
