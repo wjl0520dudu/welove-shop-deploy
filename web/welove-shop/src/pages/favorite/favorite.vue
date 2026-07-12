@@ -95,14 +95,20 @@ export default {
     normalizeFavorite(item = {}) {
       const product = item.product || {}
       const productId = Number(item.productId || product.id || 0)
-      const name = item.productName || product.title || product.name || '商品'
-      const rawPrice = item.productPrice ?? product.basePrice ?? product.price ?? 0
+      const name = item.productName || product.title || product.name || '商品已下架'
+      const hasExplicitPrice = item.productPrice != null
+      const fallbackPrice = product.basePrice != null || product.price != null
+        ? (product.basePrice ?? product.price)
+        : null
+      const priceText = hasExplicitPrice
+        ? formatMoney(item.productPrice)
+        : (fallbackPrice != null ? formatMoney(fallbackPrice) : '已下架')
       return {
         id: item.id,
         productId,
         productName: name,
         imageUrl: buildImageUrl(item.productImage || product.imageUrl || product.productImage),
-        priceText: formatMoney(rawPrice),
+        priceText,
         timeText: this.formatTime(item.createTime)
       }
     },

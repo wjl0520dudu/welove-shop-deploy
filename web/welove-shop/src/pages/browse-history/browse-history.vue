@@ -114,9 +114,13 @@ export default {
       return {
         id: Number(item.id || 0),
         productId,
-        productName: item.productName || product.title || product.name || '商品',
+        productName: item.productName || product.title || product.name || '商品已下架',
         imageUrl: buildImageUrl(item.productImage || product.imageUrl || product.productImage),
-        priceText: formatMoney(item.productPrice ?? product.basePrice ?? product.price ?? 0),
+        priceText: item.productPrice != null
+          ? formatMoney(item.productPrice)
+          : (product.basePrice != null || product.price != null
+              ? formatMoney(product.basePrice ?? product.price)
+              : '已下架'),
         sourceText: this.sourceText(item.source),
         date,
         timeText: this.formatTime(date)
