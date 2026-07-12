@@ -60,9 +60,15 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override @Async
-    public void parseDocument(String filePath, Long docId) {
+    public void parseDocument(String downloadUrl, String objectKey, Long docId) {
         try {
-            Map<String, Object> body = Map.of("file_path", filePath, "doc_id", docId);
+            // 走 download_url:ai-service 用 httpx.get(...) 下载,无需共享本地磁盘
+            // object_key 同步给 ai-service,便于其内部去重/缓存
+            Map<String, Object> body = Map.of(
+                    "download_url", downloadUrl,
+                    "object_key", objectKey == null ? "" : objectKey,
+                    "doc_id", docId
+            );
             Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/parse", body, Map.class);
             KnowledgeDoc doc = knowledgeDocMapper.selectById(docId);
             if (doc != null) {

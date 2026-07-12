@@ -14,6 +14,12 @@ spring:
   main:
     web-application-type: servlet            # 强制 Tomcat(引入 webflux 后防止 Netty 抢占)
 
+  # ---------- 共享配置(从 common-storage 资源导入) ----------
+  # 继承 cloud.storage.* 默认值(bucket / endpoint / 凭证 env 注入等)
+  # 本服务差异化项(如下方 chat/ 前缀)在本文件内覆盖
+  config:
+    import: classpath:META-INF/cloud-storage-shared.yml
+
   # ---------- Nacos ----------
   cloud:
     nacos:
@@ -82,6 +88,11 @@ jwt:
 ai:
   service:
     url: ${AI_SERVICE_URL:http://127.0.0.1:8000/api}
+
+# ---------- 云存储(本服务差异化;其他默认值从 cloud-storage-shared.yml 继承) ----------
+cloud:
+  storage:
+    key-prefix: chat/                        # chat-service 专属前缀
 
 # ---------- 业务开关 ----------
 chat-service:
