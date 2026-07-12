@@ -124,9 +124,10 @@ export default {
     },
     needsProfileSetup() {
       const u = userStore.state.user || {}
-      const noGender = u.gender === null || u.gender === undefined
-      const noTags = !Array.isArray(u.preferenceTags) || !u.preferenceTags.length
-      return noGender && !u.ageRange && !u.skinType && noTags
+      // 性别未填（0/null）且偏好标签未选时触发引导；肤质/年龄段可跳过
+      const noGender = u.gender === null || u.gender === undefined || u.gender === 0
+      const noTags = !Array.isArray(u.preferenceTags) || u.preferenceTags.length === 0
+      return noGender && noTags
     },
     async verifyCode() {
       if (this.loading || this.code.length !== 6) return
