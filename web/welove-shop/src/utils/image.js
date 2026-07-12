@@ -45,5 +45,14 @@ export function buildImageUrl(url) {
 }
 
 export function pickProductImage(product = {}) {
-  return product.imageUrl || product.productImage || product.cover || product.product?.imageUrl || product.product?.productImage || ''
+  return product.imageUrl ||
+    product.image_url ||
+    product.productImage ||
+    product.product_image ||
+    product.cover ||
+    product.product?.imageUrl ||
+    product.product?.image_url ||
+    product.product?.productImage ||
+    product.product?.product_image ||
+    ''
 }

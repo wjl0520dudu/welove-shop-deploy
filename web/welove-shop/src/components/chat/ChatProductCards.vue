@@ -36,6 +36,7 @@
 <script>
 import { formatMoney } from '../../utils/format'
 import { buildImageUrl, pickProductImage } from '../../utils/image'
+import { getProductDetail } from '../../api/product'
 
 export default {
   name: 'ChatProductCards',
@@ -44,7 +45,11 @@ export default {
   },
   emits: ['open', 'add'],
   data() {
-    return { failed: {} }
+    return {
+      failed: {},
+      detailImages: {},
+      loadingImageIds: {}
+    }
   },
   computed: {
     normalized() {
@@ -56,16 +61,61 @@ export default {
           title: p.title || p.name || p.productTitle || '好物推荐',
           reason: p.reason || p.recommendReason || p.desc || '',
           price: formatMoney(p.price ?? p.basePrice ?? p.base_price ?? p.skuPrice ?? 0),
-          image: buildImageUrl(pickProductImage(p)),
+          image: this.cardImage(p, pid),
           raw: { ...p, id: pid, productId: pid }
         }
       })
     }
   },
   watch: {
-    products() { this.failed = {} }
+    products: {
+      immediate: true,
+      handler() {
+        this.failed = {}
+        this.loadProductImages()
+      }
+    }
   },
   methods: {
+    cardImage(product, productId) {
+      if (productId) {
+        const key = String(productId)
+        return this.detailImages[key] ? buildImageUrl(this.detailImages[key]) : ''
+      }
+      return buildImageUrl(pickProductImage(product))
+    },
+    loadProductImages() {
+      const ids = Array.from(new Set(
+        (this.products || [])
+          .map(item => item.productId || item.id || item.product_id)
+          .filter(Boolean)
+          .map(String)
+      ))
+      ids.forEach((id) => {
+        if (Object.prototype.hasOwnProperty.call(this.detailImages, id) || this.loadingImageIds[id]) return
+        this.loadingImageIds = { ...this.loadingImageIds, [id]: true }
+        getProductDetail(id)
+          .then((detail = {}) => {
+            const product = detail.product || detail
+            const images = Array.isArray(detail.images) ? detail.images : []
+            const image = pickProductImage(product) ||
+              pickProductImage(detail) ||
+              (images[0] && (images[0].imageUrl || images[0].image_url || images[0].url)) ||
+              ''
+            this.detailImages = { ...this.detailImages, [id]: image }
+            this.failed = {}
+          })
+          .catch(() => {
+            const original = (this.products || []).find(item => String(item.productId || item.id || item.product_id) === id)
+            this.detailImages = { ...this.detailImages, [id]: pickProductImage(original || {}) }
+          })
+          .finally(() => {
+            const next = { ...this.loadingImageIds }
+            delete next[id]
+            this.loadingImageIds = next
+          })
+      })
+    },
     onError(index) {
       this.failed = { ...this.failed, [index]: true }
     }
