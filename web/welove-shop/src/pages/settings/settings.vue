@@ -7,11 +7,14 @@
         <text class="menu-text">编辑资料</text>
         <uni-icons type="right" size="16" color="#98a2b3" />
       </view>
+      <!-- 修改密码：骨架期手机号登录无密码，暂时隐藏 -->
+      <!--
       <view class="menu-item" @tap="go('/pages/change-password/change-password')">
         <view class="menu-icon"><uni-icons type="locked" size="18" color="#14b8a6" /></view>
         <text class="menu-text">修改密码</text>
         <uni-icons type="right" size="16" color="#98a2b3" />
       </view>
+      -->
     </view>
 
     <view class="group-card">
