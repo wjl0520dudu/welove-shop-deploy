@@ -31,7 +31,9 @@ const state = {
   messages: [],                // 当前会话消息（会话内内存缓存）
   streaming: false,
   loadingConversations: false,
-  loadingMessages: false
+  loadingMessages: false,
+  /** 后台其他会话收到新消息时标记，触发会话列表红点提示（豆包式体验） */
+  newMessageConvIds: new Set()
 }
 
 let creatingPromise = null     // create-if-none 记忆化，避免并发重复建会话
@@ -105,5 +107,14 @@ export default {
     state.messages = []
     state.streaming = false
     creatingPromise = null
+    state.newMessageConvIds = new Set()
+  },
+  /** 后台其他会话收到新消息时标记（豆包式红点） */
+  markNewMessage(convId) {
+    state.newMessageConvIds.add(Number(convId))
+  },
+  /** 用户切换到某会话时清除红点标记 */
+  clearNewMessage(convId) {
+    state.newMessageConvIds.delete(Number(convId))
   }
 }

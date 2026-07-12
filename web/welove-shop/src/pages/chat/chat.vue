@@ -148,7 +148,9 @@ export default {
       skuList: [],
       pendingCartProductId: null,
       recommended: [],
-      scrollIntoId: ''
+      scrollIntoId: '',
+      /** 记录当前正在 SSE 流的会话 ID，用于切换窗口后其他会话收到消息时标红点 */
+      _streamingConvId: null
     }
   },
   computed: {
@@ -212,6 +214,7 @@ export default {
     async selectConversation(conv) {
       this.closeDrawer()
       if (this.streaming) this.stop()
+      chatStore.clearNewMessage(conv.id)
       try {
         await chatStore.openConversation(conv)
         this.currentConversation = conv
@@ -322,6 +325,7 @@ export default {
       await this.runStream(conv.id, content, reactiveAssistant, true)
     },
     async runStream(conversationId, content, assistant, allowAuthRetry, retry = false) {
+      this._streamingConvId = conversationId
       if (!supportsEventStream()) {
         const ok = await this.fallbackSend(conversationId, content, assistant)
         if (!ok) this.markErrored(assistant)
@@ -351,7 +355,13 @@ export default {
             this.scrollToBottom()
           }
         },
-        onDone: (data) => { this.finishStream(assistant, data, conversationId) },
+        onDone: (data) => {
+          this.finishStream(assistant, data, conversationId)
+          // SSE 开始时的会话与当前会话不一致 → 用户已切走到其他窗口/会话
+          if (this.currentConversation && String(this.currentConversation.id) !== String(this._streamingConvId)) {
+            chatStore.markNewMessage(this._streamingConvId)
+          }
+        },
         onError: () => {
           // 注意:AbortError 路径不会走这里——chat.vue 已在 runStream 的 catch 里显式 return。
           // 走到 onError 一定是后端真正发了 error 事件(LLM 异常 / ai-service 5xx 等)。

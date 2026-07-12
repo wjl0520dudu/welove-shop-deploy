@@ -28,6 +28,8 @@
             :color="conv.isPinned ? '#f97316' : '#14b8a6'"
           />
           <text class="conv-title">{{ conv.title || '新对话' }}</text>
+          <!-- 豆包式红点：后台其他会话收到新消息 -->
+          <view v-if="newMessageConvIds.has(Number(conv.id))" class="new-dot"></view>
           <view class="more" @tap.stop="openMenu(conv)">
             <uni-icons type="more-filled" size="16" color="#98a2b3" />
           </view>
@@ -38,6 +40,8 @@
 </template>
 
 <script>
+import chatStore from '../../store/chat'
+
 export default {
   name: 'ConversationDrawer',
   props: {
@@ -52,6 +56,10 @@ export default {
       // 置顶优先，其余保持后端返回顺序
       const list = [...(this.conversations || [])]
       return list.sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0))
+    },
+    /** 后台其他会话收到新消息时标红点（豆包式体验） */
+    newMessageConvIds() {
+      return chatStore.state.newMessageConvIds
     }
   },
   methods: {
@@ -204,6 +212,20 @@ export default {
 .conv-item--hover .more,
 .conv-item.active .more {
   opacity: 1;
+}
+.new-dot {
+  flex: 0 0 auto;
+  width: 16rpx;
+  height: 16rpx;
+  margin-left: 6rpx;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 4rpx rgba(239, 68, 68, 0.2);
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 4rpx rgba(239, 68, 68, 0.2); }
+  50% { box-shadow: 0 0 0 8rpx rgba(239, 68, 68, 0.08); }
 }
 @keyframes slide-in {
   from { transform: translateX(-100%); }
