@@ -173,12 +173,13 @@ export default {
     if (!requireLoginFromProtectedTab('/pages/chat/chat')) return
     userStore.restore()
     this.buildRecommended()
-    if (chatStore.state.streaming) return
     // 快照会话内存缓存到响应式副本
-    this.messages = chatStore.state.messages
-    chatStore.setMessages(this.messages)
     this.conversations = [...chatStore.state.conversations]
     this.currentConversation = chatStore.state.currentConversation
+    const currentId = this.currentConversation && this.currentConversation.id
+    this.messages = (currentId && chatStore.getConversationMessages(currentId)) || chatStore.state.messages
+    this.streaming = currentId ? chatStore.isStreaming(currentId) : false
+    chatStore.setMessages(this.messages)
     if (!this.conversations.length) {
       this.loadConversations()
     }
@@ -186,10 +187,10 @@ export default {
   },
   onHide() {
     // 不再在 onHide 中 abort——切换窗口时 SSE 应在后台继续接收，
-    // 与豆包行为一致。只有真正离开页面（onUnload）才断开连接。
+    // 与豆包行为一致。只有点击停止按钮才会断开当前会话的流。
   },
   onUnload() {
-    this.abortStream()
+    // Keep in-flight SSE tasks alive unless the user taps stop.
   },
   methods: {
     /* ---------- 会话列表 ---------- */
@@ -213,22 +214,32 @@ export default {
     },
     async selectConversation(conv) {
       this.closeDrawer()
-      if (this.streaming) this.stop()
+      // 切换会话只切换视图，旧会话的 SSE 继续写入自己的会话缓存。
+      this.saveCurrentConversationMessages()
       chatStore.clearNewMessage(conv.id)
       try {
-        await chatStore.openConversation(conv)
         this.currentConversation = conv
-        this.messages = (chatStore.state.messages || []).map((m) => this.hydrateServerMessage(m))
+        chatStore.setCurrentConversation(conv)
+        const cached = chatStore.getConversationMessages(conv.id)
+        if (cached) {
+          this.messages = cached
+        } else {
+          await chatStore.openConversation(conv)
+          this.messages = (chatStore.state.messages || []).map((m) => this.hydrateServerMessage(m))
+          chatStore.setConversationMessages(conv.id, this.messages)
+        }
         chatStore.setMessages(this.messages)
+        this.syncCurrentStreaming()
         this.scrollToBottom()
       } catch (e) {
         uni.showToast({ title: '加载会话失败', icon: 'none' })
       }
     },
-    newChat() {
-      if (this.streaming) this.stop()
+    async newChat() {
+      this.saveCurrentConversationMessages()
       this.currentConversation = null
       this.messages = []
+      this.streaming = false
       chatStore.setCurrentConversation(null)
       chatStore.setMessages(this.messages)
       this.buildRecommended()
@@ -309,6 +320,7 @@ export default {
         conv = await chatStore.ensureConversation(this.titleFrom(content))
         this.currentConversation = conv
         this.conversations = [...chatStore.state.conversations]
+        chatStore.setConversationMessages(conv.id, this.messages)
       } catch (e) {
         uni.showToast({ title: '创建会话失败', icon: 'none' })
         return
@@ -319,6 +331,7 @@ export default {
       // Vue3: push 进响应式数组后，须取回数组内的响应式代理再改，
       // 否则改的是裸对象引用，不会触发重渲染（流式 token 收到了但聊天框不刷新）。
       const reactiveAssistant = this.messages[this.messages.length - 1]
+      chatStore.setConversationMessages(conv.id, this.messages)
       this.setStreaming(true)
       this.scrollToBottom()
 
@@ -328,7 +341,7 @@ export default {
       this._streamingConvId = conversationId
       if (!supportsEventStream()) {
         const ok = await this.fallbackSend(conversationId, content, assistant)
-        if (!ok) this.markErrored(assistant)
+        if (!ok) this.markErrored(assistant, conversationId)
         return
       }
 
@@ -358,8 +371,8 @@ export default {
         onDone: (data) => {
           this.finishStream(assistant, data, conversationId)
           // SSE 开始时的会话与当前会话不一致 → 用户已切走到其他窗口/会话
-          if (this.currentConversation && String(this.currentConversation.id) !== String(this._streamingConvId)) {
-            chatStore.markNewMessage(this._streamingConvId)
+          if (this.currentConversation && String(this.currentConversation.id) !== String(conversationId)) {
+            chatStore.markNewMessage(conversationId)
           }
         },
         onError: () => {
@@ -371,25 +384,40 @@ export default {
             // 没有任何 token 才标 errored,提示用户「回复中断」
             assistant.errored = true
           }
-          this.setStreaming(false)
-          if (this.streamHandle) this.streamHandle.abort()
+          this.syncCurrentStreaming()
+          const record = chatStore.getStream(conversationId)
+          if (record && record.handle) record.handle.abort()
         }
       }
 
-      this.streamHandle = streamMessage(payload, callbacks)
+      const streamRecord = chatStore.startStream(conversationId, {
+        assistant,
+        messages: this.messages,
+        userAborted: false,
+        status: 'streaming'
+      })
+      this.syncCurrentStreaming()
+
+      const handle = streamMessage(payload, callbacks)
+      if (streamRecord) streamRecord.handle = handle
+      this.streamHandle = handle
       try {
-        await this.streamHandle.promise
+        await handle.promise
         if (assistant.streaming) this.finishStream(assistant, {}, conversationId)
       } catch (err) {
         if (err && err.name === 'AbortError') {
           // 用户主动中止:保留已收 token,标 stopped,主动把半成品发给后端落库。
           // 网络通时由 stopStream 写库;网络断时由后端 Flux.doOnCancel 兜底;SQL 去重避免重复。
+          const record = chatStore.getStream(conversationId)
           assistant.pending = false
           assistant.streaming = false
-          assistant.stopped = true
-          assistant.stoppedReason = 'user_abort'
-          this.persistStoppedSnapshot(conversationId, assistant)
-          this.setStreaming(false)
+          if (record && record.userAborted) {
+            assistant.stopped = true
+            assistant.stoppedReason = 'user_abort'
+            this.persistStoppedSnapshot(conversationId, assistant)
+          } else if (!assistant.content) {
+            assistant.errored = true
+          }
           return
         }
         if ((err && (err.status === 401 || err.status === 403)) && allowAuthRetry && !gotText) {
@@ -397,7 +425,7 @@ export default {
           if (refreshed) {
             return this.runStream(conversationId, content, assistant, false)
           }
-          this.setStreaming(false)
+          this.syncCurrentStreaming()
           toLogin('/pages/chat/chat')
           return
         }
@@ -405,9 +433,12 @@ export default {
           const ok = await this.fallbackSend(conversationId, content, assistant)
           if (ok) return
         }
-        this.markErrored(assistant)
+        this.markErrored(assistant, conversationId)
       } finally {
-        this.streamHandle = null
+        chatStore.finishStream(conversationId)
+        chatStore.setConversationMessages(conversationId, streamRecord && streamRecord.messages ? streamRecord.messages : this.messages)
+        this.syncCurrentStreaming()
+        if (this.streamHandle === handle) this.streamHandle = null
       }
     },
     async fallbackSend(conversationId, content, assistant) {
@@ -421,7 +452,7 @@ export default {
         assistant.confirmCard = (msg && msg.confirmCard) || null
         assistant.cartSelection = (msg && msg.cartSelection) || null
         assistant.streaming = false
-        this.setStreaming(false)
+        if (this.isCurrentConversation(conversationId)) this.streaming = false
         this.scrollToBottom()
         return Boolean(assistant.content || assistant.productCards.length)
       } catch (e) {
@@ -432,7 +463,7 @@ export default {
       assistant.pending = false
       assistant.streaming = false
       if (data && data.messageId) assistant.id = data.messageId
-      this.setStreaming(false)
+      if (this.isCurrentConversation(conversationId)) this.streaming = false
       if (!assistant.id) {
         try {
           const list = await getMessages(conversationId)
@@ -445,19 +476,25 @@ export default {
         }
       }
     },
-    markErrored(assistant) {
+    markErrored(assistant, conversationId) {
       assistant.pending = false
       assistant.streaming = false
       if (!assistant.content) assistant.errored = true
-      this.setStreaming(false)
+      if (!conversationId || this.isCurrentConversation(conversationId)) this.streaming = false
     },
     stop() {
-      this.abortStream()
+      this.abortStream(true)
     },
-    abortStream() {
-      if (this.streamHandle) {
+    abortStream(userInitiated = false, conversationId) {
+      const id = conversationId || (this.currentConversation && this.currentConversation.id)
+      const record = id ? chatStore.getStream(id) : null
+      if (record) {
+        record.userAborted = Boolean(userInitiated)
+        if (record.handle) record.handle.abort()
+        return
+      }
+      if (this.streamHandle && userInitiated) {
         this.streamHandle.abort()
-        this.streamHandle = null
       }
     },
     /**
@@ -625,7 +662,17 @@ export default {
     /* ---------- 工具 ---------- */
     setStreaming(v) {
       this.streaming = v
-      chatStore.setStreaming(v)
+    },
+    syncCurrentStreaming() {
+      const id = this.currentConversation && this.currentConversation.id
+      this.streaming = id ? chatStore.isStreaming(id) : false
+    },
+    isCurrentConversation(conversationId) {
+      return Boolean(this.currentConversation && String(this.currentConversation.id) === String(conversationId))
+    },
+    saveCurrentConversationMessages() {
+      const id = this.currentConversation && this.currentConversation.id
+      if (id) chatStore.setConversationMessages(id, this.messages)
     },
     buildRecommended() {
       this.recommended = buildRecommendedQuestions(userStore.state.user || {}, { limit: 4 })

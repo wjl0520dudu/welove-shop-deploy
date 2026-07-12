@@ -29,7 +29,7 @@
           />
           <text class="conv-title">{{ conv.title || '新对话' }}</text>
           <!-- 豆包式红点：后台其他会话收到新消息 -->
-          <view v-if="newMessageConvIds.has(Number(conv.id))" class="new-dot"></view>
+          <view v-if="newMessageConvIds.includes(Number(conv.id))" class="new-dot"></view>
           <view class="more" @tap.stop="openMenu(conv)">
             <uni-icons type="more-filled" size="16" color="#98a2b3" />
           </view>
@@ -59,6 +59,8 @@ export default {
     },
     /** 后台其他会话收到新消息时标红点（豆包式体验） */
     newMessageConvIds() {
+      // 依赖 newMessageVersion 以触发 Vue3 响应式更新
+      void chatStore.state.newMessageVersion
       return chatStore.state.newMessageConvIds
     }
   },

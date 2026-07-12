@@ -29,14 +29,28 @@ const state = {
   currentConversation: null,   // { id, title, isPinned, ... }
   conversations: [],           // 抽屉列表
   messages: [],                // 当前会话消息（会话内内存缓存）
+  messagesByConversationId: {},
+  activeStreams: {},
   streaming: false,
+  streamVersion: 0,
   loadingConversations: false,
   loadingMessages: false,
   /** 后台其他会话收到新消息时标记，触发会话列表红点提示（豆包式体验） */
-  newMessageConvIds: new Set()
+  newMessageConvIds: [],       // 用 Array 而非 Set——Set 的 add/delete 不触发 Vue3 响应式
+  newMessageVersion: 0         // 版本号，每次增删时 ++，触发组件更新
 }
 
 let creatingPromise = null     // create-if-none 记忆化，避免并发重复建会话
+
+function convKey(convId) {
+  return convId == null ? '' : String(convId)
+}
+
+function refreshStreamingFlag() {
+  state.streaming = Object.keys(state.activeStreams).length > 0
+  state.streamVersion++
+  return state.streaming
+}
 
 export default {
   state,
@@ -48,6 +62,16 @@ export default {
   },
   setMessages(list) {
     state.messages = Array.isArray(list) ? list : []
+  },
+  setConversationMessages(convId, list) {
+    const key = convKey(convId)
+    if (!key) return []
+    state.messagesByConversationId[key] = Array.isArray(list) ? list : []
+    return state.messagesByConversationId[key]
+  },
+  getConversationMessages(convId) {
+    const key = convKey(convId)
+    return key ? state.messagesByConversationId[key] : null
   },
   appendMessage(msg) {
     state.messages.push(msg)
@@ -64,6 +88,46 @@ export default {
   setStreaming(v) {
     state.streaming = Boolean(v)
     return state.streaming
+  },
+  startStream(convId, record = {}) {
+    const key = convKey(convId)
+    if (!key) return null
+    state.activeStreams[key] = {
+      conversationId: convId,
+      handle: null,
+      assistant: null,
+      messages: null,
+      userAborted: false,
+      status: 'streaming',
+      ...record
+    }
+    refreshStreamingFlag()
+    return state.activeStreams[key]
+  },
+  updateStream(convId, patch = {}) {
+    const record = this.getStream(convId)
+    if (!record) return null
+    Object.assign(record, patch)
+    state.streamVersion++
+    return record
+  },
+  finishStream(convId) {
+    const key = convKey(convId)
+    if (key && state.activeStreams[key]) delete state.activeStreams[key]
+    return refreshStreamingFlag()
+  },
+  getStream(convId) {
+    const key = convKey(convId)
+    return key ? state.activeStreams[key] : null
+  },
+  isStreaming(convId) {
+    void state.streamVersion
+    const key = convKey(convId)
+    return Boolean(key && state.activeStreams[key])
+  },
+  hasActiveStreams() {
+    void state.streamVersion
+    return Object.keys(state.activeStreams).length > 0
   },
   async loadConversations() {
     state.loadingConversations = true
@@ -83,6 +147,7 @@ export default {
       // 把后端字段映射为前端渲染需要的统一形态(包含 stopped 等截断标记)
       const raw = Array.isArray(list) ? list : (list?.records || [])
       state.messages = raw.map(hydrateServerMessage)
+      this.setConversationMessages(conversation.id, state.messages)
       return state.messages
     } finally {
       state.loadingMessages = false
@@ -105,16 +170,29 @@ export default {
     state.currentConversation = null
     state.conversations = []
     state.messages = []
+    state.messagesByConversationId = {}
+    state.activeStreams = {}
     state.streaming = false
+    state.streamVersion = 0
     creatingPromise = null
-    state.newMessageConvIds = new Set()
+    state.newMessageConvIds = []
+    state.newMessageVersion = 0
   },
   /** 后台其他会话收到新消息时标记（豆包式红点） */
   markNewMessage(convId) {
-    state.newMessageConvIds.add(Number(convId))
+    const id = Number(convId)
+    if (!state.newMessageConvIds.includes(id)) {
+      state.newMessageConvIds.push(id)
+      state.newMessageVersion++
+    }
   },
   /** 用户切换到某会话时清除红点标记 */
   clearNewMessage(convId) {
-    state.newMessageConvIds.delete(Number(convId))
+    const id = Number(convId)
+    const idx = state.newMessageConvIds.indexOf(id)
+    if (idx !== -1) {
+      state.newMessageConvIds.splice(idx, 1)
+      state.newMessageVersion++
+    }
   }
 }
