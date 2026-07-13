@@ -129,37 +129,44 @@ class TestSearchKnowledgeToolValidation:
     - 合法值原样透传
     - 非法值兜底 hybrid
     - 返回值带 search_mode 字段方便观测
+
+    注意：search_knowledge 已改为 async，内部有博查兜底逻辑。
+    测试 mock 高分 source 避免触发兜底，使用 ainvoke 异步调用。
     """
 
-    def test_valid_mode_passthrough(self):
+    @staticmethod
+    def _make_fake_output():
+        """构造一个带高分 source 的 fake RetrievalOutput，避免触发博查兜底。"""
+        from rag.models import Source
+        fake = MagicMock()
+        fake.knowledge_context = "ctx"
+        fake.sources = [Source(doc="test doc", score=0.9)]
+        fake.results = []
+        return fake
+
+    @pytest.mark.asyncio
+    async def test_valid_mode_passthrough(self):
         from knowledge.agent import search_knowledge
-        fake_output = MagicMock()
-        fake_output.knowledge_context = "ctx"
-        fake_output.sources = []
-        fake_output.results = []
+        fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output
-            result = search_knowledge.invoke({"query": "烟酰胺", "search_mode": "dense"})
+            result = await search_knowledge.ainvoke({"query": "烟酰胺", "search_mode": "dense"})
         assert result["search_mode"] == "dense"
 
-    def test_invalid_mode_falls_back_to_hybrid(self):
+    @pytest.mark.asyncio
+    async def test_invalid_mode_falls_back_to_hybrid(self):
         from knowledge.agent import search_knowledge
-        fake_output = MagicMock()
-        fake_output.knowledge_context = "ctx"
-        fake_output.sources = []
-        fake_output.results = []
+        fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output
-            result = search_knowledge.invoke({"query": "烟酰胺", "search_mode": "garbage-value"})
+            result = await search_knowledge.ainvoke({"query": "烟酰胺", "search_mode": "garbage-value"})
         assert result["search_mode"] == "hybrid"
 
-    def test_default_mode_is_hybrid(self):
+    @pytest.mark.asyncio
+    async def test_default_mode_is_hybrid(self):
         from knowledge.agent import search_knowledge
-        fake_output = MagicMock()
-        fake_output.knowledge_context = "ctx"
-        fake_output.sources = []
-        fake_output.results = []
+        fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output
-            result = search_knowledge.invoke({"query": "烟酰胺"})
+            result = await search_knowledge.ainvoke({"query": "烟酰胺"})
         assert result["search_mode"] == "hybrid"

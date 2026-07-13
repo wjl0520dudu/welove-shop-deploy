@@ -117,6 +117,14 @@ class Config:
         ).split(",") if o.strip()
     ]
 
+    # 9. 博查 Web 搜索兜底（KnowledgeAgent 内部知识库不足时自动触发）
+    # 不配置 BOCHA_API_KEY 时不启用兜底，KnowledgeAgent 行为不变。
+    BOCHA_API_KEY = os.getenv("BOCHA_API_KEY", "")
+    # 博查 MCP Server 启动方式：默认 "uvx"（uv 一键运行），也可换成 "npx" 或直接 HTTP。
+    BOCHA_MCP_COMMAND = os.getenv("BOCHA_MCP_COMMAND", "uvx")
+    # 博查兜底超时（秒）。兜底不应拖慢主流程，默认 5s。
+    BOCHA_SEARCH_TIMEOUT = float(os.getenv("BOCHA_SEARCH_TIMEOUT", "5.0"))
+
 
 config = Config()
 logger = logging.getLogger("ai-service")

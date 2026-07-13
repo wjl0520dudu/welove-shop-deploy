@@ -129,6 +129,18 @@ async def init_runtime() -> bool:
         store = pg_store
         _using_postgres = True
         logger.info("Using AsyncPostgresSaver + AsyncPostgresStore (db=%s)", config.PG_NAME)
+
+        # ── 博查 MCP 客户端（非阻塞，失败不影响服务启动）──
+        try:
+            from knowledge.mcp_client import init_mcp_client
+            mcp_ok = await init_mcp_client()
+            if mcp_ok:
+                logger.info("博查 MCP 客户端就绪")
+            else:
+                logger.info("博查 MCP 未启用（未配置 API Key 或连接失败），KnowledgeAgent 仅使用内部知识库")
+        except Exception:
+            logger.warning("博查 MCP 初始化异常，KnowledgeAgent 仅使用内部知识库", exc_info=True)
+
         return True
     except Exception as e:
         logger.warning("PostgreSQL 连接失败，保留 InMemory: %s", e)
@@ -137,8 +149,16 @@ async def init_runtime() -> bool:
 
 
 async def close_runtime() -> None:
-    """关闭 Postgres 连接。由 FastAPI lifespan shutdown 调用。"""
+    """关闭 Postgres 连接和 MCP 客户端。由 FastAPI lifespan shutdown 调用。"""
     global _using_postgres
+
+    # 关闭 MCP 客户端
+    try:
+        from knowledge.mcp_client import close_mcp_client
+        await close_mcp_client()
+    except Exception:
+        pass
+
     if not _using_postgres:
         return
     await _close_pg_conns()

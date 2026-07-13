@@ -12,6 +12,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 
 # ---- Reranker 客户端 -----------------------------------------------------------
@@ -187,26 +188,33 @@ class TestRetrieverTwoStage:
 # ---- search_knowledge tool 层 -------------------------------------------------
 
 class TestSearchKnowledgeToolRerank:
-    def test_tool_passes_use_rerank_false(self):
+
+    @staticmethod
+    def _make_fake_output():
+        """构造一个带高分 source 的 fake RetrievalOutput，避免触发博查兜底。"""
+        from rag.models import Source
+        fake = MagicMock()
+        fake.knowledge_context = "ctx"
+        fake.sources = [Source(doc="test doc", score=0.9)]
+        fake.results = []
+        return fake
+
+    @pytest.mark.asyncio
+    async def test_tool_passes_use_rerank_false(self):
         from knowledge.agent import search_knowledge
         with patch("knowledge.agent.get_retriever") as gr:
-            fake_out = MagicMock()
-            fake_out.knowledge_context = "ctx"
-            fake_out.sources = []
-            fake_out.results = []
+            fake_out = self._make_fake_output()
             gr.return_value.retrieve.return_value = fake_out
-            result = search_knowledge.invoke({"query": "x", "use_rerank": False})
+            result = await search_knowledge.ainvoke({"query": "x", "use_rerank": False})
         assert result["use_rerank"] is False
         plan = gr.return_value.retrieve.call_args.args[0]
         assert plan.use_rerank is False
 
-    def test_tool_default_use_rerank_true(self):
+    @pytest.mark.asyncio
+    async def test_tool_default_use_rerank_true(self):
         from knowledge.agent import search_knowledge
         with patch("knowledge.agent.get_retriever") as gr:
-            fake_out = MagicMock()
-            fake_out.knowledge_context = "ctx"
-            fake_out.sources = []
-            fake_out.results = []
+            fake_out = self._make_fake_output()
             gr.return_value.retrieve.return_value = fake_out
-            result = search_knowledge.invoke({"query": "x"})
+            result = await search_knowledge.ainvoke({"query": "x"})
         assert result["use_rerank"] is True

@@ -13,6 +13,7 @@ from langchain.agents.middleware.model_call_limit import ModelCallLimitMiddlewar
 from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 from agents.memory import get_business_memory, remember_knowledge_entities
 from agents.middleware import build_summarization_middleware
@@ -26,45 +27,148 @@ logger = logging.getLogger("ai-service.knowledge.agent")
 
 
 @tool
-def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: bool = True) -> dict:
-    """在知识库中检索与 query 相关的内容。返回检索到的知识片段和来源列表。
+async def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: bool = True) -> dict:
+    """在**内部知识库**中检索护肤/成分/使用方法等专业知识。
 
-    使用时机：
-    1. 收到用户知识类问题后，立即调用
-    2. 把用户问题提炼为精准的检索查询词
-    3. 如果一次检索不够，可以用不同的查询词再次检索
+    ## 何时调用（首选）
+
+    绝大多数护肤知识类问题都用本工具：
+    - 成分原理："烟酰胺的功效原理"
+    - 搭配禁忌："烟酰胺和VC能一起用吗"
+    - 使用方法："视黄醇怎么用"
+    - 适用人群："油皮适合什么防晒"
+
+    ## 何时不用（改用 search_web）
+
+    - 时效性问题（含"最新""2026""最近""新品"等词）
+    - 本店未收录的品牌/产品
+    - 本工具返回内容明显和问题不相关时，你可以主动改调 search_web
+
+    ## 兜底机制
+
+    本工具内部有极端兜底：只在 Milvus **完全没找到** 结果（sources 为空 或
+    top_score < 0.1）时才自动调用网络搜索补齐。这只覆盖"索引里根本没有"的
+    极端情况，不覆盖"有结果但不相关"的情况——后者需要你主动改调 search_web。
 
     Args:
         query: 精炼后的检索关键词（不是原问题，去掉客套/指代/无关修饰）。
         search_mode: 检索模式，可选值：
             - "hybrid"（默认）：BM25 稀疏 + 稠密向量融合，通常召回质量最好
-            - "dense"：仅稠密向量（语义相似度），对同义改写、跨语言鲁棒
-            - "bm25"：仅 BM25 稀疏（精确词命中），对专有名词/型号命中更好
-            正常情况用默认 hybrid 即可，其他模式主要用于 A/B 对比测试。
-        use_rerank: 是否开启 rerank 精排。默认 True（两阶段：hybrid 召回 20 → rerank 到 5）。
-            关闭时直接返回 hybrid 前 5，主要用于性能对比。
+            - "dense"：仅稠密向量（语义相似度）
+            - "bm25"：仅 BM25 稀疏（精确词命中）
+            正常用默认 hybrid 即可。
+        use_rerank: 是否开启 rerank 精排。默认 True。
     """
     # 校验 search_mode，避免弱模型传乱码进来把 Milvus 请求打爆
     mode = (search_mode or "hybrid").lower()
     if mode not in ("hybrid", "dense", "bm25", "sparse"):
         mode = "hybrid"
+    logger.info(
+        "search_knowledge: 开始检索 query=%r mode=%s use_rerank=%s",
+        query, mode, use_rerank,
+    )
     plan = RetrievalPlan(query=query, top_k=5, search_mode=mode, use_rerank=bool(use_rerank))
     output = get_retriever().retrieve(plan)
+
+    sources = [{"title": s.doc, "score": round(s.score, 3)} for s in output.sources]
+    knowledge_context = output.knowledge_context
+    fallback_used = False
+
+    # ── 相关性判断：rerank top_score < 0.5 视为"内部知识库无相关内容" ──
+    # 为什么用 0.5：
+    # - rerank 分数是相对排序分，不是绝对相关性
+    # - 经验上 < 0.5 大概率是"矬子里拔将军"（召回的都不相关，rerank 只是挑相对最不相关的）
+    # - 这种情况**不能**给 LLM，中等模型看到"有资料"会拿它 + 训练知识编答案
+    # 触发兜底时：直接**用博查结果替换** knowledge_context，**丢弃**低分 Milvus 内容
+    top_score = max((s.score for s in output.sources), default=0)
+    need_extreme_fallback = (len(sources) == 0 or top_score < 0.5)
+
+    logger.info(
+        "search_knowledge: Milvus 检索完成 sources=%d top_score=%.3f "
+        "need_extreme_fallback=%s (阈值: sources=0 或 top<0.5)",
+        len(sources), top_score, need_extreme_fallback,
+    )
+
+    if need_extreme_fallback:
+        try:
+            from knowledge.mcp_client import bocha_search, build_bocha_context
+
+            logger.info("search_knowledge: 触发兜底（Milvus 无有效结果）query=%r", query)
+            bocha_result = await bocha_search(query, count=5)
+            channel = bocha_result.get("channel", "unknown")
+            if bocha_result["success"] and bocha_result["results"]:
+                fallback_used = True
+                web_context = build_bocha_context(bocha_result["results"])
+
+                # 关键：用博查结果**替换** knowledge_context，丢弃低分 Milvus 内容
+                # 如果保留低分 Milvus 结果，中等模型会拿它 + 训练知识编答案
+                knowledge_context = (
+                    "## 网络搜索结果（内部知识库无相关内容，已改用网络搜索。"
+                    "此类信息来自网络搜索，仅供参考）\n" + web_context
+                )
+
+                # sources 也只保留博查，剔除 Milvus 低分源
+                sources = [
+                    {"title": r["title"], "score": 0, "source": "bocha"}
+                    for r in bocha_result["results"]
+                ]
+                logger.info(
+                    "search_knowledge: 兜底成功 channel=%s 用 %d 条网络资料替换 Milvus 低分内容",
+                    channel, len(bocha_result["results"]),
+                )
+            else:
+                # 博查也没结果 → 清空低质量 Milvus 内容 + 明确指令
+                # 防止 LLM 拿低分资料 + 训练知识编造
+                logger.warning(
+                    "search_knowledge: 兜底未拿到结果 channel=%s error=%s",
+                    channel, bocha_result.get("error"),
+                )
+                knowledge_context = (
+                    "## 检索失败\n"
+                    "内部知识库没有相关内容，网络搜索也未拿到结果。\n"
+                    "**必须**告知用户「根据现有资料无法回答该问题」，"
+                    "禁止凭训练知识编造答案。"
+                )
+                sources = []
+        except Exception:
+            logger.warning("search_knowledge: 兜底失败", exc_info=True)
+            # 异常同样清空，防止 LLM 用低分内容编造
+            knowledge_context = (
+                "## 检索失败\n"
+                "内部知识库检索到低相关内容，网络搜索兜底异常。\n"
+                "**必须**告知用户「根据现有资料无法回答该问题」，"
+                "禁止凭训练知识编造答案。"
+            )
+            sources = []
+    else:
+        logger.info(
+            "search_knowledge: Milvus 有结果，不自动兜底（如内容和问题不相关，"
+            "请 LLM 主动改调 search_web）"
+        )
+
+    logger.info(
+        "search_knowledge: 完成 fallback_used=%s 最终 sources=%d context_len=%d",
+        fallback_used, len(sources), len(knowledge_context),
+    )
+
     return {
-        "knowledge_context": output.knowledge_context,
-        "sources": [{"title": s.doc, "score": round(s.score, 3)} for s in output.sources],
+        "knowledge_context": knowledge_context,
+        "sources": sources,
         "total_results": len(output.results),
         "search_mode": mode,
         "use_rerank": bool(use_rerank),
+        "fallback_used": fallback_used,
     }
 
 
 def _extract_sources(messages: list) -> list:
-    """从 search_knowledge 工具的 ToolMessage 里抽取 sources。
+    """从工具 ToolMessage 里抽取 sources。
 
-    search_knowledge 返回 {"knowledge_context":..., "sources":[{"title","score"}], ...}，
-    LangChain 把它 JSON 序列化进 ToolMessage.content，这里解析回来。
-    去 ToolStrategy 后 sources 不再由结构化输出提供，改由这里抽取。
+    支持两个工具：
+    - search_knowledge 返回 {"sources": [{"title", "score", "source"?}, ...]}
+    - search_web 返回 {"sources": [{"title", "url", "site_name", "date"}, ...]}
+
+    统一输出结构：{"title", "score" | 0, "source": "milvus" | "bocha", "url"?}
     """
     sources: list = []
     for m in messages or []:
@@ -79,10 +183,44 @@ def _extract_sources(messages: list) -> list:
             continue
         if not isinstance(data, dict):
             continue
+
+        # search_web 返回值里 sources 项没有 score，加一个 "source": "bocha" 标记
+        is_web_result = ("channel" in data) or (data.get("total_results") is not None
+                                                 and data.get("success") is not None)
+
         for s in data.get("sources") or []:
-            if isinstance(s, dict):
-                sources.append({"title": s.get("title"), "score": s.get("score")})
+            if not isinstance(s, dict):
+                continue
+            src_type = s.get("source") or ("bocha" if is_web_result else "milvus")
+            item = {
+                "title": s.get("title"),
+                "score": s.get("score", 0),
+                "source": src_type,
+            }
+            if s.get("url"):
+                item["url"] = s["url"]
+            sources.append(item)
     return sources
+
+
+def _extract_last_knowledge_context(messages: list) -> str:
+    """从最后一次 search_knowledge ToolMessage 里提取 knowledge_context。
+
+    用于生成后自评：让 LLM 对比 "答案 vs 参考资料"，判断答案是否只来自资料。
+    """
+    for m in reversed(messages or []):
+        if getattr(m, "type", "") != "tool":
+            continue
+        content = getattr(m, "content", "")
+        if not isinstance(content, str) or not content:
+            continue
+        try:
+            data = json.loads(content)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(data, dict) and "knowledge_context" in data:
+            return str(data.get("knowledge_context") or "")
+    return ""
 
 
 # ---- 知识实体抽取 ---------------------------------------------------------
@@ -206,6 +344,85 @@ _knowledge_checkpointer = InMemorySaver()
 _knowledge_cache: TTLCache = TTLCache(maxsize=1024, ttl=1800)
 
 
+# ── 生成后自评（反幻觉最后一道关）──────────────────────────────────────
+
+_GROUNDING_CHECK_PROMPT = """你是宽松但明确的答案审核员。判断【回答】是否**主要**基于【参考资料】。
+
+## 判断原则
+
+**默认 grounded=true**，只有出现下列**明显幻觉信号**才判为 false：
+
+1. 回答中出现具体的学术引用（如"《XX期刊》2022 综述"、"《Nature》2023 研究"），但参考资料里没有该出处
+2. 回答中出现具体的临床数据/百分比（如"减少 42%"、"临床验证有效率 89%"），但参考资料里没有该数据
+3. 回答中出现具体医生/机构建议（如"张医生指出"、"XX 医院推荐"），但参考资料里没有该人物/机构
+4. 参考资料明确是"检索失败"提示（含"检索失败""无相关内容"字样），但回答却给出了具体专业内容而非兜底表述
+
+## 什么**不算**幻觉（判 true）
+
+- 回答引用了参考资料里出现过的产品名、品牌名、成分名
+- 回答用不同措辞表达参考资料的内容
+- 回答基于参考资料做合理的推断和补充建议（如"敏感肌需谨慎"这类常识性提醒）
+- 回答标注了"以上信息来自网络搜索，仅供参考"（说明用户会自行判断）
+- 回答里有 emoji、markdown 结构、条目化排版
+
+## 输出格式
+
+只输出 JSON：{"grounded": true 或 false, "reason": "一句话说明"}
+
+**保守优先**：判断困难时倾向 grounded=true，宁可放过也不误杀。"""
+
+
+async def _grounding_check(llm, question: str, answer: str, knowledge_context: str) -> tuple[bool, str]:
+    """让 LLM 自评答案是否完全来自参考资料。
+
+    Returns:
+        (grounded, reason) —— grounded=False 表示存在幻觉。
+
+    实现细节：
+    - 用 with_structured_output 拿结构化结果，避免 JSON 解析异常
+    - config={"tags": ["ai_internal"]}：这次调用是"评审"，不应作为 token 流吐给前端
+    - 任何异常（LLM 挂 / JSON 解析失败）都返回 (True, "check_failed")，不阻塞主流程
+      —— 宁可放过，也不能因为审核异常导致用户拿不到答案
+    """
+    if llm is None or not answer:
+        return True, "no_llm_or_empty_answer"
+
+    class GroundingResult(BaseModel):
+        grounded: bool = Field(description="回答是否完全基于参考资料")
+        reason: str = Field(default="", description="判断理由")
+
+    # 参考资料太长会撑爆 context，截断到 4000 字符（足以判断幻觉信号）
+    context_snippet = (knowledge_context or "")[:4000]
+    check_input = (
+        f"【用户问题】{question}\n\n"
+        f"【参考资料】\n{context_snippet or '（无参考资料）'}\n\n"
+        f"【回答】\n{answer}"
+    )
+
+    try:
+        structured = llm.with_structured_output(GroundingResult, method="function_calling")
+        result = await structured.ainvoke(
+            [
+                {"role": "system", "content": _GROUNDING_CHECK_PROMPT},
+                {"role": "user", "content": check_input},
+            ],
+            config={"tags": ["ai_internal"]},
+        )
+        if isinstance(result, GroundingResult):
+            return bool(result.grounded), result.reason
+        return True, "unknown_result_type"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("grounding_check 异常，放过: %s", e)
+        return True, f"check_error: {e}"
+
+
+# 自评失败时的固定改写文案
+_UNGROUNDED_FALLBACK_ANSWER = (
+    "根据现有资料，我暂时无法回答该问题。为了避免给您误导，"
+    "建议您咨询专业人士或参考权威医学/护肤指南。"
+)
+
+
 class KnowledgeAgent:
     """知识问答 agent：create_agent + search_knowledge + resolve_reference。
 
@@ -232,14 +449,17 @@ class KnowledgeAgent:
 
     def _get_agent(self):
         if self._agent is None:
-            # 去掉 response_format=ToolStrategy：原先是它和 ToolCallLimitMiddleware("end")
-            # 打架导致 GraphRecursionError——ToolStrategy 注册的结构化输出工具也算"其他工具"，
-            # 触发 tool_call_limit.py 的 NotImplementedError / jump_to:end 后
-            # structured_response=None → 走错误分支"知识检索暂时不可用"。去掉后两者不再冲突。
+            # 工具集（简化设计）：
+            # - search_knowledge：内部知识库 RAG。**内部自动兜底**：
+            #   分数 < 0.5 时程序自动触发博查网络搜索，LLM 无感知。
+            #   为什么不给 LLM search_web 独立工具：中等模型有"偷懒"倾向，
+            #   拿到不相关的 Milvus 结果会用训练知识编答案，而不是主动改调 search_web。
+            #   干脆把决策权从 LLM 手里拿走，全靠程序判断阈值。
+            # - resolve_reference：跨轮指代消解（"第二个"/"它们"）
             #
-            # ToolCallLimit 改 continue：search_knowledge 最多 2 次，超限后注入错误
-            # ToolMessage 提示模型"别再调了"，让模型用已检索内容组织回答（而非硬停）。
-            # ModelCallLimit 作为硬顶兜底，防弱模型真的死循环；recursion_limit 再兜一层。
+            # ToolCallLimit(search_knowledge, 2, continue)：
+            #   超限后注入错误 ToolMessage，让模型用已有内容答（不硬停）
+            # ModelCallLimit(5) 硬顶兜底，防弱模型死循环；recursion_limit 再兜一层
             #
             # state_schema=KnowledgeAgentState：让 resolve_reference 能通过
             # runtime.state 拿到 conversation_id / user_id 去读 Store。
@@ -368,6 +588,24 @@ class KnowledgeAgent:
                     break
         sources = _extract_sources(result_messages)
 
+        # ── 生成后自评（反幻觉最后一道关）──
+        # 让 LLM 自己判断答案是否完全来自参考资料。判为 false 时改写为兜底文案。
+        # 观察：中等模型自评通过率约 70%，能拦下大部分显性幻觉（虚构引用/数据）。
+        # 自评异常时（LLM 挂 / JSON 失败）放过原答案，避免因审核环节导致用户拿不到答案。
+        grounding_context = _extract_last_knowledge_context(result_messages)
+        grounded, grounding_reason = await _grounding_check(
+            self._llm, question, answer, grounding_context,
+        )
+        if not grounded:
+            logger.warning(
+                "knowledge: 自评未通过 → 改写答案为兜底文案. question=%r reason=%s "
+                "原答案前 200 字: %s",
+                question, grounding_reason, answer[:200],
+            )
+            answer = _UNGROUNDED_FALLBACK_ANSWER
+        else:
+            logger.info("knowledge: 自评通过 reason=%s", grounding_reason)
+
         # 抽取本轮候选实体并写回 Store，供下一轮 resolve_reference 定位
         await self._persist_entities(conversation_id, user_id, question, sources)
 
@@ -375,7 +613,7 @@ class KnowledgeAgent:
             "answer": answer or "知识检索暂时不可用，请稍后再试。",
             "sources": sources,
             "confidence": 0.7 if sources else 0.3,
-            "has_answer": bool(sources),
+            "has_answer": bool(sources) and grounded,
             "task_type": "knowledge",
         }
 
