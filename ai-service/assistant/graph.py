@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import logging
+import re
 from typing import Any, AsyncIterator, Dict
 from uuid import uuid4
 
+from langchain_core.messages import AIMessage
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from agents.memory import get_business_memory
-from agents.schemas import IntentDecision
-from agents.prompts import ROUTER_PROMPT
+from agents.schemas import IntentDecision, OrchestratorDecision
+from agents.prompts import ORCHESTRATOR_PROMPT, ROUTER_PROMPT
 from agents.state import AssistantState
 from agents import runtime as _runtime  # 用模块引用，运行时动态读 checkpointer/store
 from assistant.nodes import make_nodes
+from core.errors import ErrorCode
 from tools.router_tools import format_business_memory_for_router
 
 logger = logging.getLogger("ai-service.assistant.graph")
@@ -38,25 +41,258 @@ class AssistantGraph:
             if llm is not None
             else None
         )
+        self._orchestrator_llm = (
+            _build_structured_llm(llm, OrchestratorDecision, preferred_method="json_schema")
+            if llm is not None
+            else None
+        )
         self.graph = self._build()
 
     def _build(self):
         g = StateGraph(AssistantState)
+        g.add_node("analyze_request", self._analyze_request)
+        g.add_node("prepare_subtask", self._prepare_subtask)
         g.add_node("route_intent", self._route)
         g.add_node("shopping", self._nodes["shopping_node"])
         g.add_node("knowledge", self._nodes["knowledge_node"])
         g.add_node("chitchat", self._nodes["chitchat_node"])
         g.add_node("unknown", self._nodes["unknown_node"])
+        g.add_node("collect_subtask", self._collect_subtask)
+        g.add_node("synthesize_final", self._synthesize_final)
         g.add_node("format_response", self._nodes["format_response"])
-        g.add_edge(START, "route_intent")
+
+        g.add_edge(START, "analyze_request")
+        g.add_conditional_edges(
+            "analyze_request",
+            self._after_analyze,
+            {"simple": "route_intent", "complex": "prepare_subtask"},
+        )
+        g.add_edge("prepare_subtask", "route_intent")
         g.add_conditional_edges("route_intent", lambda s: s.get("route") or "unknown",
                                 {"shopping": "shopping", "knowledge": "knowledge",
                                  "chitchat": "chitchat", "unknown": "unknown"})
         for n in ("shopping", "knowledge", "chitchat", "unknown"):
-            g.add_edge(n, "format_response")
+            g.add_conditional_edges(
+                n,
+                self._after_business_node,
+                {"simple": "format_response", "complex": "collect_subtask"},
+            )
+        g.add_conditional_edges(
+            "collect_subtask",
+            self._after_collect,
+            {"next": "prepare_subtask", "done": "synthesize_final"},
+        )
+        g.add_edge("synthesize_final", "format_response")
         g.add_edge("format_response", END)
         # 从 runtime 模块动态读，确保拿到的是 init_runtime() 覆盖后的实例
         return g.compile(checkpointer=_runtime.checkpointer, store=_runtime.store)
+
+    async def _analyze_request(self, state: AssistantState) -> dict:
+        """判断本轮是否需要 Orchestrator，并在需要时生成任务议程。"""
+        question = state.get("question") or ""
+        if not question.strip():
+            return {
+                "original_question": question,
+                "orchestrator_mode": "simple",
+                "orchestrator_reason": "问题为空",
+            }
+
+        if self._orchestrator_llm is None:
+            return self._fallback_orchestrator_decision(question, "编排模型未配置")
+
+        history_messages = state.get("messages") or [HumanMessage(question)]
+        cid = state.get("conversation_id")
+        uid = state.get("user_id")
+        context_text = ""
+        try:
+            memory = await get_business_memory(cid, uid)
+            context_text = format_business_memory_for_router(memory)
+        except Exception:  # noqa: BLE001
+            logger.warning("orchestrator: 读取 business_memory 失败，退化到纯问题分析", exc_info=True)
+
+        messages: list = [SystemMessage(content=ORCHESTRATOR_PROMPT)]
+        if context_text:
+            messages.append(SystemMessage(content=context_text))
+        messages.extend(history_messages)
+
+        try:
+            decision = await self._orchestrator_llm.ainvoke(
+                messages,
+                config={"tags": ["ai_internal"]},
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("orchestrator: 结构化拆解失败，尝试启发式拆解", exc_info=True)
+            return self._fallback_orchestrator_decision(question, "结构化拆解失败")
+
+        if decision is None:
+            logger.warning(
+                "orchestrator: 结构化拆解返回 None，重试一次 question=%r",
+                question,
+            )
+            try:
+                decision = await self._orchestrator_llm.ainvoke(
+                    messages,
+                    config={"tags": ["ai_internal"]},
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("orchestrator: 结构化拆解重试失败，尝试启发式拆解", exc_info=True)
+                return self._fallback_orchestrator_decision(question, "结构化拆解重试失败")
+
+        if decision is None:
+            logger.warning(
+                "orchestrator: 结构化拆解重试后仍为空，尝试启发式拆解 question=%r",
+                question,
+            )
+            return self._fallback_orchestrator_decision(question, "结构化拆解返回空")
+
+        normalized = self._normalize_orchestrator_decision(question, decision)
+        decision_mode = str(_decision_value(decision, "mode", "simple") or "simple").lower()
+        if decision_mode == "complex" and normalized.get("orchestrator_mode") == "simple":
+            logger.warning(
+                "orchestrator: LLM 声称 complex 但 tasks 不足，尝试启发式补救 question=%r",
+                question,
+            )
+            return self._fallback_orchestrator_decision(question, "LLM 拆解不完整")
+        return normalized
+
+    def _normalize_orchestrator_decision(self, question: str, decision: Any) -> dict:
+        mode = str(_decision_value(decision, "mode", "simple") or "simple").lower()
+        reason = str(_decision_value(decision, "reason", "") or "")
+        raw_tasks = _decision_value(decision, "tasks", []) or []
+        tasks = _normalize_tasks(raw_tasks)
+        if mode != "complex" or len(tasks) < 2:
+            return {
+                "original_question": question,
+                "orchestrator_mode": "simple",
+                "orchestrator_reason": reason or "单任务请求",
+                "sub_questions": [],
+                "sub_results": [],
+                "current_subquestion_index": 0,
+            }
+        return {
+            "original_question": question,
+            "orchestrator_mode": "complex",
+            "orchestrator_reason": reason or "检测到多任务请求",
+            "sub_questions": tasks,
+            "sub_results": [],
+            "current_subquestion_index": 0,
+        }
+
+    def _fallback_orchestrator_decision(self, question: str, reason: str) -> dict:
+        tasks = _heuristic_split_tasks(question)
+        if len(tasks) < 2:
+            return {
+                "original_question": question,
+                "orchestrator_mode": "simple",
+                "orchestrator_reason": reason,
+                "sub_questions": [],
+                "sub_results": [],
+                "current_subquestion_index": 0,
+            }
+        return {
+            "original_question": question,
+            "orchestrator_mode": "complex",
+            "orchestrator_reason": f"{reason}，启发式识别到多问题",
+            "sub_questions": tasks,
+            "sub_results": [],
+            "current_subquestion_index": 0,
+        }
+
+    def _after_analyze(self, state: AssistantState) -> str:
+        if state.get("orchestrator_mode") == "complex" and len(state.get("sub_questions") or []) >= 2:
+            return "complex"
+        return "simple"
+
+    def _prepare_subtask(self, state: AssistantState) -> dict:
+        tasks = state.get("sub_questions") or []
+        idx = int(state.get("current_subquestion_index") or 0)
+        if idx < 0 or idx >= len(tasks):
+            return {"orchestrator_mode": "simple"}
+
+        task = dict(tasks[idx])
+        question = str(task.get("question") or "").strip() or state.get("original_question") or ""
+        heading = _format_subtask_heading(idx, len(tasks), question)
+        return {
+            "question": question,
+            "active_subtask": task,
+            "answer": "",
+            "task_type": None,
+            "product_cards": [],
+            "sources": [],
+            "tool_calls": [],
+            "error": False,
+            "error_code": None,
+            "message": None,
+            "subtask_heading": heading,
+            "messages": [HumanMessage(content=question)],
+        }
+
+    def _after_business_node(self, state: AssistantState) -> str:
+        return "complex" if state.get("orchestrator_mode") == "complex" else "simple"
+
+    def _collect_subtask(self, state: AssistantState) -> dict:
+        task = dict(state.get("active_subtask") or {})
+        idx = int(state.get("current_subquestion_index") or 0)
+        result = {
+            "id": task.get("id") or f"t{idx + 1}",
+            "question": task.get("question") or state.get("question") or "",
+            "intent_hint": task.get("intent_hint"),
+            "depends_on": task.get("depends_on") or [],
+            "route": state.get("route"),
+            "route_reason": state.get("route_reason"),
+            "task_type": state.get("task_type") or state.get("route") or "unknown",
+            "answer": state.get("answer", ""),
+            "product_cards": state.get("product_cards", []),
+            "sources": state.get("sources", []),
+            "tool_calls": state.get("tool_calls", []),
+            "error": bool(state.get("error", False)),
+            "error_code": state.get("error_code"),
+            "message": state.get("message"),
+        }
+        results = list(state.get("sub_results") or [])
+        results.append(result)
+        return {
+            "sub_results": results,
+            "current_subquestion_index": idx + 1,
+        }
+
+    def _after_collect(self, state: AssistantState) -> str:
+        idx = int(state.get("current_subquestion_index") or 0)
+        total = len(state.get("sub_questions") or [])
+        return "next" if idx < total else "done"
+
+    def _synthesize_final(self, state: AssistantState) -> dict:
+        sub_results = state.get("sub_results") or []
+        answer = _build_orchestrator_answer(sub_results)
+        product_cards = _dedupe_product_cards(
+            card
+            for result in sub_results
+            for card in (result.get("product_cards") or [])
+        )
+        sources = _dedupe_sources(
+            source
+            for result in sub_results
+            for source in (result.get("sources") or [])
+        )
+        tool_calls = [
+            call
+            for result in sub_results
+            for call in (result.get("tool_calls") or [])
+        ]
+        has_error = any(bool(r.get("error")) for r in sub_results)
+        return {
+            "answer": answer,
+            "task_type": "orchestrator",
+            "product_cards": product_cards,
+            "sources": sources,
+            "tool_calls": tool_calls,
+            "route": "orchestrator",
+            "route_reason": state.get("orchestrator_reason"),
+            "error": has_error,
+            "error_code": ErrorCode.ORCHESTRATOR_PARTIAL_ERROR if has_error else None,
+            "message": "部分子任务处理失败" if has_error else None,
+            "messages": [AIMessage(content=answer)],
+        }
 
     async def _route(self, state: AssistantState) -> dict:
         question = state.get("question")
@@ -245,7 +481,18 @@ class AssistantGraph:
 
         # 主图业务节点返回的 {"messages": [AIMessage(content=完整答案)]} 会被 messages
         # stream 再发一次；这个片段不是 LLM 增量，而是节点回写的完整答案，必须过滤。
-        main_nodes = {"shopping", "knowledge", "chitchat", "unknown", "format_response", "route_intent"}
+        main_nodes = {
+            "analyze_request",
+            "prepare_subtask",
+            "route_intent",
+            "shopping",
+            "knowledge",
+            "chitchat",
+            "unknown",
+            "collect_subtask",
+            "synthesize_final",
+            "format_response",
+        }
         if not namespace and graph_node in main_nodes:
             return True
 
@@ -266,11 +513,197 @@ class AssistantGraph:
                 },
             }
 
+        if node_name == "analyze_request" and node_output.get("orchestrator_mode") == "complex":
+            yield {
+                "type": "orchestrator_plan",
+                "data": {
+                    "mode": "complex",
+                    "reason": node_output.get("orchestrator_reason"),
+                    "tasks": node_output.get("sub_questions") or [],
+                },
+            }
+
+        if node_name == "prepare_subtask" and node_output.get("subtask_heading"):
+            active = node_output.get("active_subtask") or {}
+            yield {
+                "type": "orchestrator_subtask",
+                "data": {
+                    "task": active,
+                    "heading": node_output.get("subtask_heading"),
+                },
+            }
+            yield {
+                "type": "token",
+                "data": {"content": node_output.get("subtask_heading")},
+            }
+
         # 2. 子节点消息里可能含 ToolMessage（工具返回）—— 用于 tool_result
         # 主图节点自己不会直接调工具，工具都在子图（ShoppingAgent 等）内部。
         # subgraphs=True 时子图消息会在 messages 流里冒泡，这里 updates 流一般看不到。
         # 保留结构，未来如果有主图直接调工具的场景可以在这里补充。
         _ = node_name  # 静默 lint
+
+
+def _decision_value(decision: Any, key: str, default: Any = None) -> Any:
+    if isinstance(decision, dict):
+        return decision.get(key, default)
+    return getattr(decision, key, default)
+
+
+def _build_structured_llm(llm: Any, schema: Any, *, preferred_method: str):
+    try:
+        return llm.with_structured_output(schema, method=preferred_method)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "structured output method=%s unavailable for %s, fallback to function_calling",
+            preferred_method,
+            getattr(schema, "__name__", str(schema)),
+            exc_info=True,
+        )
+        return llm.with_structured_output(schema, method="function_calling")
+
+
+def _normalize_tasks(raw_tasks: list) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(raw_tasks[:5], start=1):
+        if hasattr(item, "model_dump"):
+            data = item.model_dump()
+        elif hasattr(item, "dict"):
+            data = item.dict()
+        elif isinstance(item, dict):
+            data = dict(item)
+        else:
+            continue
+
+        question = str(data.get("question") or "").strip()
+        if not question:
+            continue
+
+        task_id = str(data.get("id") or f"t{index}").strip() or f"t{index}"
+        if task_id in seen_ids:
+            task_id = f"t{index}"
+        seen_ids.add(task_id)
+
+        depends_on = data.get("depends_on") or []
+        if not isinstance(depends_on, list):
+            depends_on = []
+
+        tasks.append({
+            "id": task_id,
+            "question": question,
+            "intent_hint": data.get("intent_hint"),
+            "depends_on": [str(v) for v in depends_on if str(v).strip()],
+            "reason": str(data.get("reason") or ""),
+        })
+
+    valid_ids = {t["id"] for t in tasks}
+    for task in tasks:
+        task["depends_on"] = [dep for dep in task["depends_on"] if dep in valid_ids and dep != task["id"]]
+    return tasks
+
+
+_HEURISTIC_SPLIT_PATTERN = re.compile(
+    r"(?:[？?。；;]\s*)|"
+    r"(?:[，,]?\s*(?:然后|还有|另外|顺便|再帮我|再|以及|并且|此外|同时|另|接着)\s*)|"
+    r"(?:[，,]\s*(?=(?:第[一二三四五六七八九十0-9]+[个款]|它们|他们|这几款|那几款|上面|前面)))"
+)
+
+
+def _heuristic_split_tasks(question: str) -> list[dict[str, Any]]:
+    """LLM planner 不可用时的保守兜底，只处理明显多问句。"""
+    parts = [p.strip(" ，,。？?；;") for p in _HEURISTIC_SPLIT_PATTERN.split(question) if p.strip(" ，,。？?；;")]
+    if len(parts) < 2:
+        return []
+
+    tasks: list[dict[str, Any]] = []
+    for idx, part in enumerate(parts[:5], start=1):
+        task_id = f"t{idx}"
+        depends_on: list[str] = []
+        if idx > 1 and re.search(
+            r"(这些|它们|他们|她们|上面|前面|刚才|推荐的这些|这几款|那几款|第[一二三四五六七八九十0-9]+[个款])",
+            part,
+        ):
+            depends_on = ["t1"]
+        tasks.append({
+            "id": task_id,
+            "question": part,
+            "intent_hint": _guess_intent_hint(part),
+            "depends_on": depends_on,
+            "reason": "启发式拆分",
+        })
+    return tasks
+
+
+def _guess_intent_hint(text: str) -> str:
+    if re.search(r"(推荐|找|商品|价格|多少钱|对比|比较|库存|规格|性价比|便宜|贵|评分|销量)", text):
+        return "shopping"
+    if re.search(r"(成分|功效|原理|怎么用|适合什么|能不能|副作用|禁忌|区别|为什么|浓度)", text):
+        return "knowledge"
+    if re.search(r"(你好|谢谢|再见|总结|刚才问了什么|你是谁)", text):
+        return "chitchat"
+    return "unknown"
+
+
+def _format_subtask_heading(index: int, total: int, question: str) -> str:
+    prefix = "我会分成几个部分依次回答：\n\n" if index == 0 else "\n\n"
+    return f"{prefix}{index + 1}. {question}\n"
+
+
+def _build_orchestrator_answer(sub_results: list[dict[str, Any]]) -> str:
+    if not sub_results:
+        return "我暂时没能完成这个复合问题的拆解，请你换个方式再问一次。"
+
+    parts = ["我会分成几个部分依次回答："]
+    for index, result in enumerate(sub_results, start=1):
+        question = result.get("question") or f"第 {index} 个问题"
+        answer = (result.get("answer") or "").strip()
+        if not answer:
+            if result.get("error"):
+                answer = "这一部分暂时处理失败，请稍后再试。"
+            else:
+                answer = "这一部分暂时没有得到明确结果。"
+        parts.append(f"{index}. {question}\n{answer}")
+    return "\n\n".join(parts)
+
+
+def _dedupe_product_cards(cards_iter) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for card in cards_iter:
+        if not isinstance(card, dict):
+            continue
+        key = str(card.get("product_id") or card.get("id") or card.get("title") or len(out))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(card)
+    return out
+
+
+def _dedupe_sources(sources_iter) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in sources_iter:
+        if hasattr(source, "model_dump"):
+            source = source.model_dump()
+        elif hasattr(source, "dict"):
+            source = source.dict()
+        if not isinstance(source, dict):
+            continue
+        key = str(
+            source.get("url")
+            or source.get("doc_id")
+            or source.get("doc")
+            or source.get("doc_name")
+            or source.get("title")
+            or len(out)
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(source)
+    return out
 
 
 def _collect_tags(meta: Dict[str, Any]) -> set[str]:

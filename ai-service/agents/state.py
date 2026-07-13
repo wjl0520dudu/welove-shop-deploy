@@ -39,6 +39,16 @@ class AssistantState(TypedDict):
     message: NotRequired[str]
     business_memory: NotRequired[dict[str, Any]]
 
+    # ── Orchestrator 复杂问题编排 ──
+    original_question: NotRequired[str]
+    orchestrator_mode: NotRequired[str]          # simple | complex
+    orchestrator_reason: NotRequired[str]
+    sub_questions: NotRequired[list[dict[str, Any]]]
+    active_subtask: NotRequired[dict[str, Any]]
+    subtask_heading: NotRequired[str]
+    current_subquestion_index: NotRequired[int]
+    sub_results: NotRequired[list[dict[str, Any]]]
+
 
 class ShoppingAgentState(AgentState):
     """ShoppingAgent 内部 state：继承 create_agent 的 AgentState（含 messages），

@@ -25,6 +25,7 @@ class ErrorCode:
     # ── 主图 / 编排层 ─────────────────────────────
     ASSISTANT_ERROR = "AI_ASSISTANT_ERROR"
     ROUTING_FAILED = "AI_ROUTING_FAILED"
+    ORCHESTRATOR_PARTIAL_ERROR = "AI_ORCHESTRATOR_PARTIAL_ERROR"
 
     # ── 各子 agent ───────────────────────────────
     SHOPPING_ERROR = "AI_SHOPPING_ERROR"
@@ -57,6 +58,7 @@ USER_MESSAGE_HINT: dict[str, str] = {
     ErrorCode.LLM_ERROR: "AI 服务出错，请稍后重试",
     ErrorCode.ASSISTANT_ERROR: "AI 助手暂时不可用",
     ErrorCode.ROUTING_FAILED: "无法理解你的请求，请换个说法",
+    ErrorCode.ORCHESTRATOR_PARTIAL_ERROR: "部分问题处理失败，请稍后重试",
     ErrorCode.SHOPPING_ERROR: "商品搜索暂时不可用，请稍后重试",
     ErrorCode.KNOWLEDGE_ERROR: "知识检索暂时不可用，请稍后重试",
     ErrorCode.CHITCHAT_ERROR: "闲聊回复失败，请稍后重试",

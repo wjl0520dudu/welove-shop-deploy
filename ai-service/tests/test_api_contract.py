@@ -103,6 +103,24 @@ class TestNormalizeAIResponse:
         assert resp.run_id == "r0"
         assert resp.error is False
 
+    def test_orchestrator_metadata_preserved(self):
+        resp = normalize_ai_response(
+            {
+                "answer": "分三部分回答",
+                "task_type": "orchestrator",
+                "orchestrator_mode": "complex",
+                "orchestrator_reason": "多任务",
+                "sub_questions": [{"id": "t1", "question": "推荐防晒"}],
+                "sub_results": [{"id": "t1", "answer": "找到商品"}],
+            },
+            run_id="r-orch",
+            trace_id="t-orch",
+        )
+        assert resp.task_type == "orchestrator"
+        assert resp.orchestrator_mode == "complex"
+        assert resp.sub_questions[0]["id"] == "t1"
+        assert resp.sub_results[0]["answer"] == "找到商品"
+
 
 # ---------------- 错误响应 ----------------
 
@@ -182,5 +200,6 @@ class TestContractConsistency:
             "answer", "sources", "task_type", "product_cards",
             "confirm_card", "cart_selection", "cart_list",
             "run_id", "trace_id", "error", "error_code", "message",
+            "orchestrator_mode", "orchestrator_reason", "sub_questions", "sub_results",
         }
         assert required.issubset(fields), f"missing: {required - fields}"

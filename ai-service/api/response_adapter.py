@@ -128,6 +128,10 @@ def normalize_ai_response(
         steps=_normalize_steps(result.get("steps") or result.get("_steps")),
         tool_calls=_normalize_tool_calls(result.get("tool_calls")),
         intermediate_conclusions=result.get("intermediate_conclusions") or [],
+        orchestrator_mode=result.get("orchestrator_mode"),
+        orchestrator_reason=result.get("orchestrator_reason"),
+        sub_questions=result.get("sub_questions") or [],
+        sub_results=result.get("sub_results") or [],
     )
     return response
 

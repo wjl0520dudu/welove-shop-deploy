@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 # 主图只产 shopping|knowledge|chitchat|unknown；cart 仅为兼容旧购物车库保留。
 TaskType = Literal["shopping", "knowledge", "chitchat", "unknown", "cart"]
+OrchestratorIntentHint = Literal["shopping", "knowledge", "chitchat", "unknown"]
 
 
 class IntentDecision(BaseModel):
@@ -13,6 +14,36 @@ class IntentDecision(BaseModel):
     )
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="分类置信度")
     reason: str = Field("", description="分类理由")
+
+
+class OrchestratorTask(BaseModel):
+    """Orchestrator 拆解出的一个可执行子任务。"""
+
+    id: str = Field(..., description="子任务 ID，例如 t1/t2/t3")
+    question: str = Field(..., description="可以独立交给某个业务 Agent 处理的子问题")
+    intent_hint: Optional[OrchestratorIntentHint] = Field(
+        None,
+        description="可选意图提示，最终仍由 route_intent 复核",
+    )
+    depends_on: List[str] = Field(
+        default_factory=list,
+        description="该子任务依赖的前置子任务 ID；例如价格对比依赖推荐结果",
+    )
+    reason: str = Field("", description="为什么拆出这个子任务")
+
+
+class OrchestratorDecision(BaseModel):
+    """判断当前请求是否需要 Orchestrator，并在需要时给出任务议程。"""
+
+    mode: Literal["simple", "complex"] = Field(
+        "simple",
+        description="simple=保持原单问题链路；complex=进入 Orchestrator 任务议程",
+    )
+    reason: str = Field("", description="判断理由")
+    tasks: List[OrchestratorTask] = Field(
+        default_factory=list,
+        description="复杂请求拆出的有序任务列表；simple 时为空",
+    )
 
 
 class AgentFinalResponse(BaseModel):

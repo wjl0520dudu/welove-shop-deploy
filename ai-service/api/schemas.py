@@ -168,6 +168,10 @@ class AIResponse(FlexibleModel):
         default_factory=list,
         description="Intermediate conclusions",
     )
+    orchestrator_mode: Optional[str] = Field(None, description="Orchestrator mode: simple or complex")
+    orchestrator_reason: Optional[str] = Field(None, description="Orchestrator planning reason")
+    sub_questions: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestrator sub tasks")
+    sub_results: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestrator sub task results")
 
 
 class StreamEvent(FlexibleModel):

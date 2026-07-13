@@ -1,9 +1,9 @@
 import asyncio
 from unittest.mock import MagicMock
 
-from agents.schemas import IntentDecision
+from agents.schemas import IntentDecision, OrchestratorDecision
 from agents.memory import remember_product_cards, get_business_memory
-from assistant.graph import AssistantGraph
+from assistant.graph import AssistantGraph, _heuristic_split_tasks
 
 
 def clear_business_memory():
@@ -90,9 +90,80 @@ def _patch_router(monkeypatch, route):
     monkeypatch.setattr("assistant.graph.AssistantGraph._route", fake_route)
 
 
+def _patch_simple_orchestrator(monkeypatch):
+    async def fake_analyze(self, state):
+        return {
+            "original_question": state.get("question", ""),
+            "orchestrator_mode": "simple",
+            "orchestrator_reason": "test simple",
+            "sub_questions": [],
+            "sub_results": [],
+            "current_subquestion_index": 0,
+        }
+
+    monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+
+
+class FakePlanner:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def ainvoke(self, *args, **kwargs):
+        self.calls += 1
+        if not self.responses:
+            return None
+        if len(self.responses) == 1:
+            return self.responses[0]
+        return self.responses.pop(0)
+
+
+def _patch_complex_orchestrator(monkeypatch):
+    async def fake_analyze(self, state):
+        return {
+            "original_question": state.get("question", ""),
+            "orchestrator_mode": "complex",
+            "orchestrator_reason": "test complex",
+            "sub_questions": [
+                {
+                    "id": "t1",
+                    "question": "给我推荐适合油皮的防晒",
+                    "intent_hint": "shopping",
+                    "depends_on": [],
+                    "reason": "推荐商品",
+                },
+                {
+                    "id": "t2",
+                    "question": "烟酰胺是什么成分？",
+                    "intent_hint": "knowledge",
+                    "depends_on": [],
+                    "reason": "知识查询",
+                },
+                {
+                    "id": "t3",
+                    "question": "你推荐的这些商品价格对比如何？",
+                    "intent_hint": "shopping",
+                    "depends_on": ["t1"],
+                    "reason": "依赖推荐结果做对比",
+                },
+            ],
+            "sub_results": [],
+            "current_subquestion_index": 0,
+        }
+
+    async def fake_route(self, state):
+        question = state.get("question", "")
+        route = "knowledge" if "成分" in question else "shopping"
+        return {"route": route, "route_reason": f"route for {question}"}
+
+    monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+    monkeypatch.setattr("assistant.graph.AssistantGraph._route", fake_route)
+
+
 def test_router_routes_to_shopping(monkeypatch):
     async def run():
         clear_business_memory()
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "shopping")
         shopping = FakeShoppingAgent()
         graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=shopping, knowledge_agent=FakeKnowledgeAgent())
@@ -105,6 +176,7 @@ def test_router_routes_to_shopping(monkeypatch):
 
 def test_router_routes_to_knowledge(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "knowledge")
         knowledge = FakeKnowledgeAgent()
         graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(), knowledge_agent=knowledge)
@@ -117,6 +189,7 @@ def test_router_routes_to_knowledge(monkeypatch):
 
 def test_router_routes_to_chitchat(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "chitchat")
         # chitchat_node 内部会跟 llm 交互；用 RunnableLambda 构造可组合的假 LLM。
         # AssistantGraph 构造时会调 llm.with_structured_output(...)，为此在外面套一层
@@ -139,6 +212,7 @@ def test_router_routes_to_chitchat(monkeypatch):
 
 def test_router_routes_to_unknown(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "unknown")
         graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(), knowledge_agent=FakeKnowledgeAgent())
         result = await graph.run(question="随便说点啥")
@@ -149,6 +223,7 @@ def test_router_routes_to_unknown(monkeypatch):
 
 def test_no_llm_routes_to_unknown(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "unknown")
         graph = AssistantGraph(llm=None, shopping_agent=None, knowledge_agent=None)
         result = await graph.run(question="推荐一款防晒")
@@ -164,6 +239,7 @@ def test_business_memory_shared_across_turns(monkeypatch):
     """
     async def run():
         clear_business_memory()
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "shopping")
         shopping = FakeShoppingAgent()
         graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=shopping,
@@ -185,6 +261,7 @@ def test_business_memory_shared_across_turns(monkeypatch):
 
 def test_error_node_returns_error_fields(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "shopping")
         class BoomShopping:
             async def run(self, **kwargs):
@@ -198,9 +275,112 @@ def test_error_node_returns_error_fields(monkeypatch):
 
 def test_run_id_and_trace_id_present(monkeypatch):
     async def run():
+        _patch_simple_orchestrator(monkeypatch)
         _patch_router(monkeypatch, "unknown")
         graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=None, knowledge_agent=None)
         result = await graph.run(question="hi", conversation_id="c-rt")
         assert result["run_id"]
         assert result["trace_id"]
     asyncio.run(run())
+
+
+def test_orchestrator_executes_complex_tasks_in_order(monkeypatch):
+    async def run():
+        _patch_complex_orchestrator(monkeypatch)
+        shopping = FakeShoppingAgent()
+        knowledge = FakeKnowledgeAgent()
+        graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=shopping, knowledge_agent=knowledge)
+
+        result = await graph.run(
+            question="给我推荐适合油皮的防晒，然后我还想知道烟酰胺是什么成分，还有你推荐的这些价格对比如何？",
+            conversation_id="c-orch",
+            user_id=8,
+        )
+
+        assert result["task_type"] == "orchestrator"
+        assert result["orchestrator_mode"] == "complex"
+        assert [c["question"] for c in shopping.calls] == [
+            "给我推荐适合油皮的防晒",
+            "你推荐的这些商品价格对比如何？",
+        ]
+        assert knowledge.calls[0]["question"] == "烟酰胺是什么成分？"
+        assert len(result["sub_results"]) == 3
+        assert result["sub_questions"][2]["depends_on"] == ["t1"]
+        assert result["product_cards"][0]["product_id"] == 7
+        assert result["sources"][0]["doc_name"] == "成分手册"
+        assert "1. 给我推荐适合油皮的防晒" in result["answer"]
+        assert "2. 烟酰胺是什么成分？" in result["answer"]
+        assert "3. 你推荐的这些商品价格对比如何？" in result["answer"]
+    asyncio.run(run())
+
+
+def test_orchestrator_prepare_subtask_stream_heading():
+    async def run():
+        graph = AssistantGraph.__new__(AssistantGraph)
+        events = []
+        async for event in graph._translate_update_event(
+            "prepare_subtask",
+            {
+                "active_subtask": {"id": "t1", "question": "给我推荐防晒"},
+                "subtask_heading": "我会分成几个部分依次回答：\n\n1. 给我推荐防晒\n",
+            },
+        ):
+            events.append(event)
+
+        assert events[0]["type"] == "orchestrator_subtask"
+        assert events[1] == {
+            "type": "token",
+            "data": {"content": "我会分成几个部分依次回答：\n\n1. 给我推荐防晒\n"},
+        }
+    asyncio.run(run())
+
+
+def test_analyze_request_falls_back_when_llm_returns_none():
+    async def run():
+        graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(), knowledge_agent=FakeKnowledgeAgent())
+        graph._orchestrator_llm = FakePlanner(None, None)
+
+        result = await graph._analyze_request({
+            "question": "推荐三款补水面霜，然后比较这些哪个更便宜，第二个含什么成分？",
+            "conversation_id": "c-none",
+            "user_id": 1,
+        })
+
+        assert graph._orchestrator_llm.calls == 2
+        assert result["orchestrator_mode"] == "complex"
+        assert len(result["sub_questions"]) == 3
+        assert result["sub_questions"][1]["depends_on"] == ["t1"]
+        assert result["sub_questions"][2]["depends_on"] == ["t1"]
+    asyncio.run(run())
+
+
+def test_analyze_request_falls_back_when_llm_returns_empty_complex():
+    async def run():
+        graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(), knowledge_agent=FakeKnowledgeAgent())
+        graph._orchestrator_llm = FakePlanner(
+            OrchestratorDecision(mode="complex", reason="多任务但未给 tasks", tasks=[]),
+        )
+
+        result = await graph._analyze_request({
+            "question": "推荐三款补水面霜，然后比较这些哪个更便宜，第二个含什么成分？",
+            "conversation_id": "c-empty-complex",
+            "user_id": 1,
+        })
+
+        assert result["orchestrator_mode"] == "complex"
+        assert len(result["sub_questions"]) == 3
+        assert result["sub_questions"][0]["question"] == "推荐三款补水面霜"
+    asyncio.run(run())
+
+
+def test_heuristic_splits_second_item_reference():
+    tasks = _heuristic_split_tasks("推荐三款补水面霜，然后比较这些哪个更便宜，第二个含什么成分？")
+
+    assert [t["question"] for t in tasks] == [
+        "推荐三款补水面霜",
+        "比较这些哪个更便宜",
+        "第二个含什么成分",
+    ]
+    assert [t["intent_hint"] for t in tasks] == ["shopping", "shopping", "knowledge"]
+    assert tasks[1]["depends_on"] == ["t1"]
+    assert tasks[2]["depends_on"] == ["t1"]
