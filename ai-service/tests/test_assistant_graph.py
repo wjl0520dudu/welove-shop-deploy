@@ -384,3 +384,144 @@ def test_heuristic_splits_second_item_reference():
     assert [t["intent_hint"] for t in tasks] == ["shopping", "shopping", "knowledge"]
     assert tasks[1]["depends_on"] == ["t1"]
     assert tasks[2]["depends_on"] == ["t1"]
+
+
+# ─────────────────────────────────────────────────────────────
+# 多模态（image_url）分支测试
+# ─────────────────────────────────────────────────────────────
+
+def test_multimodal_shopping_route_shortcut(monkeypatch):
+    """有 image_url 时，_route 直接判 shopping，不走 router LLM。"""
+    async def run():
+        _patch_simple_orchestrator(monkeypatch)
+        graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(),
+                               knowledge_agent=FakeKnowledgeAgent())
+        decision = await graph._route({
+            "question": "找同款",
+            "image_url": "/weloveshop/products/c1/xxx.jpg",
+        })
+        assert decision["route"] == "shopping"
+        assert "多模态" in decision["route_reason"]
+    asyncio.run(run())
+
+
+def test_multimodal_shopping_node_bypasses_shopping_agent(monkeypatch):
+    """带 image_url 的 shopping_node 直接调 search_multimodal_v1，跳过 ShoppingAgent。
+
+    校验点：
+    - 走多模态检索返回商品卡片
+    - ShoppingAgent.run 完全没被调用
+    - 结果里的 tool_calls 记录了 search_multimodal_v1
+    """
+    async def run():
+        _patch_simple_orchestrator(monkeypatch)
+
+        # patch multimodal 检索：不真调向量库
+        multimodal_calls = []
+        async def fake_search_multimodal_v1(query_text, query_image_url, top_k=5, filters=None):
+            multimodal_calls.append({
+                "query_text": query_text,
+                "query_image_url": query_image_url,
+                "top_k": top_k,
+            })
+            return [
+                {"product_id": 42, "title": "跑鞋", "brand": "Nike",
+                 "base_price": 499, "image_url": "/x.jpg",
+                 "sub_category": "跑鞋"},
+                {"product_id": 43, "title": "跑鞋2", "brand": "Adidas",
+                 "base_price": 599, "image_url": "/y.jpg",
+                 "sub_category": "跑鞋"},
+            ]
+        monkeypatch.setattr(
+            "shopping.multimodal_search.search_multimodal_v1",
+            fake_search_multimodal_v1,
+        )
+
+        # 让写推荐话术的 LLM 走 fake，返回固定文本
+        from langchain_core.runnables import RunnableLambda
+        async def fake_llm(prompt, config=None, **kwargs):
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="这两款都很适合日常穿搭。")
+        llm = RunnableLambda(fake_llm)
+        # 满足 __init__ 里的 with_structured_output 调用
+        llm.with_structured_output = MagicMock(return_value=MagicMock())
+
+        # ShoppingAgent 若被调用会抛异常暴露
+        class BoomShoppingAgent:
+            async def run(self, **kwargs):
+                raise AssertionError("ShoppingAgent should not be called when image_url is set")
+
+        graph = AssistantGraph(llm=llm, shopping_agent=BoomShoppingAgent(),
+                               knowledge_agent=FakeKnowledgeAgent())
+        result = await graph.run(
+            question="找一双跟这个类似的跑鞋",
+            image_url="/weloveshop/products/c3/p_clothes_003_live.jpg",
+            conversation_id="c-mm",
+            user_id=1,
+        )
+
+        assert len(multimodal_calls) == 1
+        assert multimodal_calls[0]["query_image_url"] == "/weloveshop/products/c3/p_clothes_003_live.jpg"
+        assert result["task_type"] == "shopping"
+        assert [c["product_id"] for c in result["product_cards"]] == [42, 43]
+        assert any(tc["name"] == "search_multimodal_v1" for tc in result["tool_calls"])
+        # 推荐话术来自 fake LLM
+        assert "日常穿搭" in result["answer"]
+    asyncio.run(run())
+
+
+def test_text_only_still_uses_shopping_agent(monkeypatch):
+    """无 image_url 时保持走 ShoppingAgent，不动原链路。"""
+    async def run():
+        clear_business_memory()
+        _patch_simple_orchestrator(monkeypatch)
+        _patch_router(monkeypatch, "shopping")
+        shopping = FakeShoppingAgent()
+        graph = AssistantGraph(llm=_dummy_llm(), shopping_agent=shopping,
+                               knowledge_agent=FakeKnowledgeAgent())
+        result = await graph.run(question="推荐一款防晒", conversation_id="c-text-only")
+        # ShoppingAgent 被调用了（多模态路径不会调它）
+        assert len(shopping.calls) == 1
+        assert result["product_cards"][0]["product_id"] == 7
+    asyncio.run(run())
+
+
+def test_image_only_no_question_still_works(monkeypatch):
+    """纯图搜索：question 为空 + 有 image_url，仍能走多模态分支。"""
+    async def run():
+        _patch_simple_orchestrator(monkeypatch)
+
+        async def fake_search_multimodal_v1(query_text, query_image_url, top_k=5, filters=None):
+            # 纯图搜索时 query_text 应为空
+            assert not (query_text or "").strip()
+            return [
+                {"product_id": 99, "title": "同款跑鞋", "brand": "Nike",
+                 "base_price": 599, "image_url": "/z.jpg", "sub_category": "跑鞋"},
+            ]
+        monkeypatch.setattr(
+            "shopping.multimodal_search.search_multimodal_v1",
+            fake_search_multimodal_v1,
+        )
+
+        # LLM 走 fake，不生成话术也行
+        from langchain_core.runnables import RunnableLambda
+        async def fake_llm(prompt, config=None, **kwargs):
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="根据你上传的图片，找到这款相似商品。")
+        llm = RunnableLambda(fake_llm)
+        llm.with_structured_output = MagicMock(return_value=MagicMock())
+
+        graph = AssistantGraph(llm=llm, shopping_agent=FakeShoppingAgent(),
+                               knowledge_agent=FakeKnowledgeAgent())
+        result = await graph.run(
+            question="",  # 纯图搜索
+            image_url="/weloveshop/products/c3/p_clothes_003_live.jpg",
+            conversation_id="c-image-only",
+            user_id=1,
+        )
+
+        assert result["task_type"] == "shopping"
+        assert result["product_cards"][0]["product_id"] == 99
+        # route_reason 里应有"带图请求"标记，证明走了多模态短路
+        assert "多模态" in (result.get("route_reason") or "")
+    asyncio.run(run())

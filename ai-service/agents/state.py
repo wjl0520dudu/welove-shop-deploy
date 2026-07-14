@@ -18,6 +18,12 @@ class AssistantState(TypedDict):
     conversation_id: NotRequired[str]
     user_id: NotRequired[int | str]
     jwt_token: NotRequired[str]
+    # 多模态输入：单张图片 URL（可以是 OSS 绝对 URL，也可以是相对路径，
+    # 后端调用 DashScope 前会走 _normalize_image_url 拼上 IMAGE_BASE_URL）。
+    # 有图时 shopping_node 走多模态检索链路（search_multimodal_v1），
+    # 无图时走原有 ShoppingAgent 纯文本链路。
+    # TODO(base64): 后续如支持前端直传 base64，会先上传到 OSS 转成 URL 再进这个字段。
+    image_url: NotRequired[str]
 
     # ── 路由节点产出 ──
     route: NotRequired[str]

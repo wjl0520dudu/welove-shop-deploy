@@ -295,7 +295,17 @@ class AssistantGraph:
         }
 
     async def _route(self, state: AssistantState) -> dict:
-        question = state.get("question")
+        question = (state.get("question") or "").strip()
+
+        # 多模态短路：有图直接判 shopping。文本 LLM 看不到图，让 router 分类
+        # 无意义；用户传图基本都是"找同款/找相似"，走 shopping 分支即可。
+        # 注意：多模态场景 question 可以为空（纯图搜索），必须在空 question 检查之前判断。
+        # Orchestrator 若已拆解子任务，也允许当前子任务的 intent_hint 是 knowledge
+        # 等——只有拿到 image_url 且原始 question 是当前问题时才强制 shopping。
+        image_url = (state.get("image_url") or "").strip()
+        if image_url and state.get("question") == state.get("active_subtask", {}).get("question", state.get("question")):
+            return {"route": "shopping", "route_reason": "带图请求 → 强制 shopping 多模态分支"}
+
         if not question:
             return {"route": "unknown", "route_reason": "问题为空"}
 
@@ -341,7 +351,12 @@ class AssistantGraph:
         """构造主图初始 state。返回 (state, run_id, trace_id)。"""
         run_id = kwargs.get("run_id") or str(uuid4())
         trace_id = kwargs.get("trace_id") or str(uuid4())
-        question = kwargs.get("question", "")
+        question = kwargs.get("question", "") or ""
+        image_url = (kwargs.get("image_url") or "").strip() or None
+        # 纯图搜索时 question 可能为空，此时给 messages 一个占位描述，
+        # 让 checkpointer / summarization middleware 能有内容处理；
+        # 若 question 非空，直接透传给 HumanMessage。
+        human_content = question.strip() or "[用户上传了一张图片，未附文字说明]"
         state: AssistantState = {
             "question": question,
             "conversation_id": kwargs.get("conversation_id"),
@@ -349,9 +364,11 @@ class AssistantGraph:
             "jwt_token": kwargs.get("jwt_token"),
             "run_id": run_id,
             "trace_id": trace_id,
-            "messages": [HumanMessage(content=question)],
+            "messages": [HumanMessage(content=human_content)],
             "error": False,
         }
+        if image_url:
+            state["image_url"] = image_url
         return state, run_id, trace_id
 
     async def run(self, **kwargs) -> dict:

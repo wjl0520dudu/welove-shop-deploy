@@ -30,6 +30,10 @@ class ChatRequest(BaseModel):
     skin_type: Optional[str] = Field(None, description="User skin type profile")
     preference_tags: Optional[List[str]] = Field(None, description="User preference tags")
     jwt_token: Optional[str] = Field(None, description="JWT token forwarded by Java for Java API callbacks")
+    # 单张图片 URL（应已由前端上传至 OSS）。相对路径会由后端自动拼 IMAGE_BASE_URL。
+    # 有值时 shopping 意图走多模态检索链路；无值时走原文本 hybrid_search。
+    # TODO(base64): 如需支持 base64，前端应先转 URL；此处不接 base64，避免大 payload 传输。
+    image_url: Optional[str] = Field(None, description="Single reference image URL for multimodal shopping")
 
 
 class AgentRunRequest(BaseModel):
