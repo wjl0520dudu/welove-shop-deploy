@@ -64,6 +64,59 @@ export function streamMessage(payload, cb = {}) {
   })
 }
 
+/**
+ * 多模态图文流式发送消息（SSE）
+ *
+ * 与 streamMessage 唯一差异：URL 改到 /chat/multimodal/stream/messages,
+ * payload 必须带 imageUrl (先调 uploadChatImage 拿到)。content 可为空。
+ *
+ * @param {object} payload  同 streamMessage,额外必填 imageUrl(OSS URL);
+ *                          content 允许为空(纯图搜索)
+ * @param {object} cb       同 streamMessage
+ */
+export function streamMultimodalMessage(payload, cb = {}) {
+  const token = getToken()
+  return postEventStream('/api/chat/chat/multimodal/stream/messages', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: payload,
+    onOpen: cb.onOpen,
+    onEvent: (frame) => dispatchChatEvent(frame, cb)
+  })
+}
+
+/**
+ * 上传聊天图片到 chat-service / OSS。走 uni.uploadFile,携带 Bearer。
+ *
+ * 后端会做 MIME + 大小校验(默认 image/jpeg,png,webp,gif;<=10MB),
+ * 失败返回 HTTP 400 + { code: 400, message: '...' }。
+ *
+ * @param {string} filePath  uni.chooseImage 返回的本地临时路径
+ * @returns {Promise<{objectKey:string, url:string}>}  上传成功的 OSS 对象 key + 完整 URL
+ */
+export function uploadChatImage(filePath) {
+  const token = getToken()
+  return new Promise((resolve, reject) => {
+    uni.uploadFile({
+      url: '/api/chat/chat/upload/image',
+      filePath,
+      name: 'file',
+      header: token ? { Authorization: `Bearer ${token}` } : {},
+      success: (res) => {
+        // uni.uploadFile.res.data 是字符串,需要手动 JSON.parse
+        let body = null
+        try { body = JSON.parse(res.data) } catch (e) { body = null }
+        if (res.statusCode >= 200 && res.statusCode < 300 && body && body.code === 0) {
+          resolve(body.data || {})
+        } else {
+          const msg = (body && (body.message || body.msg)) || `HTTP ${res.statusCode}`
+          reject(new Error(msg))
+        }
+      },
+      fail: (err) => reject(err)
+    })
+  })
+}
+
 function toArray(v) {
   if (Array.isArray(v)) return v
   if (v == null) return []

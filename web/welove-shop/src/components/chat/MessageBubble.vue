@@ -9,7 +9,20 @@
       >
         <TypingIndicator v-if="showTyping" />
         <template v-else>
-          <text class="text" :user-select="true" :selectable="true">{{ message.content }}</text><text v-if="message.streaming" class="cursor">▍</text>
+          <!-- 用户上传的图片:多模态消息在文本上方渲染缩略图。点击预览大图。 -->
+          <image
+            v-if="displayImageUrl"
+            class="msg-image"
+            :src="displayImageUrl"
+            mode="widthFix"
+            @tap="previewImage"
+          />
+          <text
+            v-if="message.content"
+            class="text"
+            :user-select="true"
+            :selectable="true"
+          >{{ message.content }}</text><text v-if="message.streaming" class="cursor">▍</text>
         </template>
       </view>
       <view v-if="message.errored" class="errored">
@@ -48,10 +61,27 @@ export default {
     showTyping() {
       return !this.isUser && this.message.pending && !this.message.content
     },
+    /**
+     * 兼容 snake_case (imageUrl / image_url) 从后端来的字段。
+     * 只有 user 角色 + 有图 URL 才渲染 —— assistant 不返回图片。
+     */
+    displayImageUrl() {
+      if (!this.isUser) return ''
+      return this.message.imageUrl || this.message.image_url || ''
+    },
     feedbackLabel() {
       if (this.message.feedbackType === 'like') return '已赞'
       if (this.message.feedbackType === 'dislike') return '已踩'
       return ''
+    }
+  },
+  methods: {
+    previewImage() {
+      if (!this.displayImageUrl) return
+      uni.previewImage({
+        urls: [this.displayImageUrl],
+        current: this.displayImageUrl
+      })
     }
   }
 }
@@ -111,6 +141,15 @@ export default {
 }
 .text {
   white-space: pre-wrap;
+}
+/* 用户消息里的图片:占满气泡宽度、圆角、最大高度限制避免长图撑爆屏幕 */
+.msg-image {
+  display: block;
+  width: 100%;
+  max-height: 480rpx;
+  border-radius: 14rpx;
+  margin-bottom: 12rpx;
+  background: #f2f4f7;
 }
 .cursor {
   color: #14b8a6;

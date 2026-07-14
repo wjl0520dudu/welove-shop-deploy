@@ -57,21 +57,43 @@
     </scroll-view>
 
     <view class="input-bar">
-      <view class="input-wrap">
-        <input
-          v-model="input"
-          class="chat-input"
-          placeholder="输入你的购物需求"
-          confirm-type="send"
-          :adjust-position="false"
-          @confirm="onSend"
-        />
+      <!-- 待发送图片预览:选好图后先在输入框上方展示,点 × 可撤销 -->
+      <view v-if="pendingImageUrl" class="pending-image">
+        <image class="pending-image-thumb" :src="pendingImageUrl" mode="aspectFill" />
+        <view class="pending-image-remove" @tap="removePendingImage">×</view>
+        <text class="pending-image-tip">已选图片,发送后将图文一起搜索</text>
       </view>
-      <view v-if="!streaming" class="send-btn" :class="{ disabled: !input.trim() }" @tap="onSend">
-        <uni-icons type="paperplane-filled" size="22" color="#ffffff" />
-      </view>
-      <view v-else class="stop-btn" @tap="stop">
-        <view class="stop-square"></view>
+      <view class="input-row">
+        <!-- 图片选择按钮:上传中显示 loading,禁用防重复 -->
+        <view
+          class="image-btn"
+          :class="{ disabled: uploadingImage || streaming }"
+          @tap="pickImage"
+        >
+          <uni-icons v-if="!uploadingImage" type="image" size="22" color="#14b8a6" />
+          <view v-else class="uploading-dot"></view>
+        </view>
+        <view class="input-wrap">
+          <input
+            v-model="input"
+            class="chat-input"
+            :placeholder="pendingImageUrl ? '可加文字描述(选填)' : '输入你的购物需求'"
+            confirm-type="send"
+            :adjust-position="false"
+            @confirm="onSend"
+          />
+        </view>
+        <view
+          v-if="!streaming"
+          class="send-btn"
+          :class="{ disabled: !canSend }"
+          @tap="onSend"
+        >
+          <uni-icons type="paperplane-filled" size="22" color="#ffffff" />
+        </view>
+        <view v-else class="stop-btn" @tap="stop">
+          <view class="stop-square"></view>
+        </view>
       </view>
     </view>
 
@@ -104,6 +126,8 @@ import { refreshAccessToken } from '../../utils/request'
 import { buildRecommendedQuestions } from '../../utils/chatRecommend'
 import {
   streamMessage,
+  streamMultimodalMessage,
+  uploadChatImage,
   sendMessage,
   getMessages,
   feedback as feedbackApi,
@@ -150,7 +174,11 @@ export default {
       recommended: [],
       scrollIntoId: '',
       /** 记录当前正在 SSE 流的会话 ID，用于切换窗口后其他会话收到消息时标红点 */
-      _streamingConvId: null
+      _streamingConvId: null,
+      /** 待发送的图片 URL(用户已选图并上传完成,尚未跟 content 一起发送) */
+      pendingImageUrl: '',
+      /** 是否正在上传图(禁用发送按钮和图片按钮避免重复) */
+      uploadingImage: false
     }
   },
   computed: {
@@ -167,6 +195,15 @@ export default {
     greeting() {
       const name = userStore.state.user && userStore.state.user.username
       return name ? `你好 ${name}，我是你的专属导购助手` : '你好，我是你的专属导购助手'
+    },
+    /**
+     * 发送按钮可用条件:
+     * - 有文字 → 可发
+     * - 有图 → 可发(允许纯图搜索)
+     * - 都没有 → 禁用
+     */
+    canSend() {
+      return this.input.trim().length > 0 || !!this.pendingImageUrl
     }
   },
   onShow() {
@@ -302,22 +339,72 @@ export default {
     pickRecommend(question) {
       this.send(question)
     },
+    /**
+     * 用户点图片按钮:选一张图 → 立即上传到 chat-service → 存 pendingImageUrl。
+     * 使用统一的 pendingImageUrl 状态,后续 send 时判断是否走多模态入口。
+     */
+    async pickImage() {
+      if (this.uploadingImage || this.streaming) return
+      try {
+        const chooseRes = await new Promise((resolve, reject) => {
+          uni.chooseImage({
+            count: 1,
+            sizeType: ['compressed'],  // H5 下会被 uni 尽量压缩
+            sourceType: ['album', 'camera'],
+            success: resolve,
+            fail: reject
+          })
+        })
+        const filePath = chooseRes && chooseRes.tempFilePaths && chooseRes.tempFilePaths[0]
+        if (!filePath) return
+        this.uploadingImage = true
+        uni.showLoading({ title: '上传中', mask: true })
+        try {
+          const { url } = await uploadChatImage(filePath)
+          if (!url) throw new Error('上传返回空 URL')
+          this.pendingImageUrl = url
+        } finally {
+          this.uploadingImage = false
+          uni.hideLoading()
+        }
+      } catch (err) {
+        // chooseImage fail (用户取消 / 权限拒绝) 不弹提示;上传失败才提示
+        const msg = err && err.errMsg
+        if (msg && msg.indexOf('chooseImage:fail') === 0) return
+        uni.showToast({ title: (err && err.message) || '图片上传失败', icon: 'none' })
+      }
+    },
+    /** 撤销待发送图片(点缩略图右上角 ×) */
+    removePendingImage() {
+      this.pendingImageUrl = ''
+    },
     async send(text) {
       const content = (text != null ? text : this.input).trim()
-      if (!content) {
-        uni.showToast({ title: '请输入内容', icon: 'none' })
+      const imageUrl = this.pendingImageUrl
+      const hasImage = !!imageUrl
+      // 纯文本时必须有 content;有图时 content 可空(纯图搜索)
+      if (!content && !hasImage) {
+        uni.showToast({ title: '请输入内容或选择图片', icon: 'none' })
         return
       }
       if (this.streaming) return
       this.input = ''
+      // 发出去后立即清 pending,防止重复带图
+      this.pendingImageUrl = ''
 
-      const userMsg = this.makeMessage({ role: 'user', content })
+      // 用户消息:有图时 content 允许为空,由 MessageBubble 渲染 imageUrl + 文本
+      const userMsg = this.makeMessage({
+        role: 'user',
+        content: content || (hasImage ? '' : ''),
+        imageUrl: hasImage ? imageUrl : undefined
+      })
       this.messages.push(userMsg)
       this.scrollToBottom()
 
       let conv
       try {
-        conv = await chatStore.ensureConversation(this.titleFrom(content))
+        // 标题用文本;纯图搜索用"[图片]"
+        conv = await chatStore.ensureConversation(this.titleFrom(content || '[图片]'))
         this.currentConversation = conv
         this.conversations = [...chatStore.state.conversations]
         chatStore.setConversationMessages(conv.id, this.messages)
@@ -335,9 +422,9 @@ export default {
       this.setStreaming(true)
       this.scrollToBottom()
 
-      await this.runStream(conv.id, content, reactiveAssistant, true)
+      await this.runStream(conv.id, content, reactiveAssistant, true, false, hasImage ? imageUrl : '')
     },
-    async runStream(conversationId, content, assistant, allowAuthRetry, retry = false) {
+    async runStream(conversationId, content, assistant, allowAuthRetry, retry = false, imageUrl = '') {
       this._streamingConvId = conversationId
       if (!supportsEventStream()) {
         const ok = await this.fallbackSend(conversationId, content, assistant)
@@ -345,7 +432,7 @@ export default {
         return
       }
 
-      const payload = this.buildPayload(conversationId, content, retry)
+      const payload = this.buildPayload(conversationId, content, retry, imageUrl)
       let gotText = false
       const callbacks = {
         onText: (delta) => {
@@ -398,7 +485,12 @@ export default {
       })
       this.syncCurrentStreaming()
 
-      const handle = streamMessage(payload, callbacks)
+      // 有图 → 走多模态流式接口(POST /chat/multimodal/stream/messages);
+      // 无图 → 走纯文本流式接口。两个端点 payload 差别就是 imageUrl 字段,
+      // buildPayload 已经在最外面拼好了。
+      const handle = imageUrl
+        ? streamMultimodalMessage(payload, callbacks)
+        : streamMessage(payload, callbacks)
       if (streamRecord) streamRecord.handle = handle
       this.streamHandle = handle
       try {
@@ -423,7 +515,7 @@ export default {
         if ((err && (err.status === 401 || err.status === 403)) && allowAuthRetry && !gotText) {
           const refreshed = await refreshAccessToken().catch(() => false)
           if (refreshed) {
-            return this.runStream(conversationId, content, assistant, false)
+            return this.runStream(conversationId, content, assistant, false, false, imageUrl)
           }
           this.syncCurrentStreaming()
           toLogin('/pages/chat/chat')
@@ -677,9 +769,9 @@ export default {
     buildRecommended() {
       this.recommended = buildRecommendedQuestions(userStore.state.user || {}, { limit: 4 })
     },
-    buildPayload(conversationId, content, retry = false) {
+    buildPayload(conversationId, content, retry = false, imageUrl = '') {
       const u = userStore.state.user || {}
-      return {
+      const payload = {
         userId: Number(u.id) || undefined,
         conversationId,
         content,
@@ -690,6 +782,10 @@ export default {
         preferenceTags: this.normalizeTags(u.preferenceTags),
         retry
       }
+      // 有图时加 imageUrl,后端 MultimodalStreamChatRequest DTO 会解析。
+      // 纯文本请求不带此字段,兼容旧 StreamChatRequest。
+      if (imageUrl) payload.imageUrl = imageUrl
+      return payload
     },
     normalizeTags(tags) {
       if (!tags) return []
@@ -816,19 +912,87 @@ export default {
   right: 0;
   bottom: 112rpx;
   left: 0;
-  display: grid;
-  grid-template-columns: 1fr 84rpx;
-  gap: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
   padding: 18rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
   background: rgba(255, 255, 255, 0.98);
   border-top: 1rpx solid #e5e7eb;
   box-shadow: 0 -8rpx 28rpx rgba(15, 118, 110, 0.08);
   z-index: 20;
 }
+/* 输入行:图片按钮 + 输入框 + 发送按钮,横向排列 */
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+/* 图片选择按钮:与发送按钮同样的圆角,配色用浅色底 + 主色图标 */
+.image-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 78rpx;
+  height: 78rpx;
+  border-radius: 50%;
+  background: #ecfdf5;
+  border: 1rpx solid #a7f3d0;
+  flex-shrink: 0;
+}
+.image-btn.disabled {
+  opacity: 0.5;
+}
+.uploading-dot {
+  width: 24rpx;
+  height: 24rpx;
+  border-radius: 50%;
+  border: 4rpx solid #14b8a6;
+  border-top-color: transparent;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+/* 待发送图片预览区:输入行上方一条,显示缩略图 + 撤销按钮 + 提示文案 */
+.pending-image {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  padding: 12rpx 16rpx;
+  background: #f0fdf4;
+  border: 1rpx dashed #86efac;
+  border-radius: 14rpx;
+}
+.pending-image-thumb {
+  width: 90rpx;
+  height: 90rpx;
+  border-radius: 10rpx;
+  background: #d1fae5;
+  flex-shrink: 0;
+}
+.pending-image-remove {
+  width: 40rpx;
+  height: 40rpx;
+  line-height: 40rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 32rpx;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.pending-image-tip {
+  flex: 1;
+  color: #059669;
+  font-size: 24rpx;
+}
 .input-wrap {
   display: flex;
   align-items: center;
   gap: 12rpx;
+  flex: 1;
+  min-width: 0;
   height: 78rpx;
   padding: 0 24rpx;
   border-radius: 999rpx;
