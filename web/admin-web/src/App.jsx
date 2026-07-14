@@ -8,7 +8,7 @@ import OrderManagement from './pages/OrderManagement.jsx';
 import ConversationManagement from './pages/ConversationManagement.jsx';
 // TODO: 以下模块数据源未接入，骨架期先注释，后续增强
 // import NoticeManagement from './pages/NoticeManagement.jsx';
-// import KnowledgeManagement from './pages/KnowledgeManagement.jsx';
+import KnowledgeManagement from './pages/KnowledgeManagement.jsx';
 // import KnowledgeInspection from './pages/KnowledgeInspection.jsx';
 // import AgentRunManagement from './pages/AgentRunManagement.jsx';
 // import RecommendReport from './pages/RecommendReport.jsx';
@@ -39,7 +39,9 @@ export default function App() {
           <Route path="conversations" element={<ConversationManagement />} />
           {/* TODO: 以下模块数据源未接入，骨架期先注释，后续增强
           <Route path="notices" element={<NoticeManagement />} />
+          */}
           <Route path="knowledge" element={<KnowledgeManagement />} />
+          {/* TODO:
           <Route path="inspection" element={<KnowledgeInspection />} />
           <Route path="agent-runs" element={<AgentRunManagement />} />
           <Route path="recommend" element={<RecommendReport />} />

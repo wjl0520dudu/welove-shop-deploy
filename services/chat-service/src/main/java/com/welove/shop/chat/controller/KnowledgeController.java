@@ -6,10 +6,16 @@ import com.welove.shop.common.core.result.Result;
 import com.welove.shop.common.storage.service.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Slf4j
@@ -47,5 +53,35 @@ public class KnowledgeController {
     public Result<Void> delete(@PathVariable Long id) {
         knowledgeService.deleteDoc(id);
         return Result.ok();
+    }
+
+    /**
+     * 下载知识库模板文件。
+     */
+    @GetMapping("/template")
+    public ResponseEntity<org.springframework.core.io.Resource> template() {
+        try {
+            org.springframework.core.io.ClassPathResource resource =
+                    new org.springframework.core.io.ClassPathResource("knowledge_template.md");
+            if (!resource.exists()) {
+                // 不存在则返回内联模板内容
+                String fallback = "# 知识文档模板\n\n按此格式编写知识库文档...\n";
+                byte[] bytes = fallback.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                org.springframework.core.io.ByteArrayResource byteResource =
+                        new org.springframework.core.io.ByteArrayResource(bytes);
+                return ResponseEntity.ok()
+                        .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                                "attachment; filename=\"knowledge_template.md\"")
+                        .contentType(org.springframework.http.MediaType.parseMediaType("text/markdown; charset=utf-8"))
+                        .body(byteResource);
+            }
+            return ResponseEntity.ok()
+                    .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"knowledge_template.md\"")
+                    .contentType(org.springframework.http.MediaType.parseMediaType("text/markdown; charset=utf-8"))
+                    .body(resource);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

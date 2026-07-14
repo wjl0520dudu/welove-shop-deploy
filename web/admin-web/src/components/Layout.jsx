@@ -9,7 +9,7 @@ const MENU = [
   { path: '/conversations', icon: '💬', label: '对话管理' },
   // TODO: 以下模块数据源未接入，骨架期先注释，后续增强
   // { path: '/notices',       icon: '📢', label: '公告管理' },
-  // { path: '/knowledge',     icon: '📚', label: '知识库管理' },
+  { path: '/knowledge',     icon: '📚', label: '知识库管理' },
   // { path: '/inspection',    icon: '🔍', label: '知识巡检' },
   // { path: '/agent-runs',    icon: '🤖', label: 'Agent 监控' },
   // { path: '/recommend',     icon: '📈', label: '推荐效果' },

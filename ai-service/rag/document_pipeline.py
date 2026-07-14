@@ -24,6 +24,18 @@ def load_text(file_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+async def download_text(download_url: str) -> str:
+    """从 URL 下载文本内容。支持 txt / md 文件。"""
+    import httpx
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.get(download_url, follow_redirects=True)
+        resp.raise_for_status()
+        content = resp.text
+        if not content or not content.strip():
+            raise ValueError(f"Downloaded content is empty: {download_url}")
+        return content
+
+
 def clean_text(text: str) -> str:
     text = text.replace("\r\n", "\n")
     text = re.sub(r"[ \t]+", " ", text)
@@ -53,8 +65,27 @@ def split_text(text: str, chunk_size: int | None = None, chunk_overlap: int | No
 
 def build_chunks(request: ParseRequest) -> List[DocumentChunk]:
     raw_text = load_text(request.file_path)
+    return _build_chunks_from_text(raw_text, request)
+
+
+def build_chunks_from_text(text: str, doc_id: int, title: str = "",
+                            doc_type: str = "text", category_id: int | None = None) -> List[DocumentChunk]:
+    """从文本内容直接构建 chunk，不依赖文件系统。"""
+    from rag.models import ParseRequest
+    req = ParseRequest(
+        file_path=title or f"doc_{doc_id}.md",
+        doc_id=doc_id,
+        title=title,
+        doc_type=doc_type,
+        category_id=category_id,
+    )
+    return _build_chunks_from_text(text, req)
+
+
+def _build_chunks_from_text(raw_text: str, request: ParseRequest) -> List[DocumentChunk]:
     parts = split_text(raw_text)
     total = len(parts)
+    source = request.file_path or request.title or f"doc_{request.doc_id}.md"
 
     chunks: List[DocumentChunk] = []
     for index, content in enumerate(parts):
@@ -63,13 +94,13 @@ def build_chunks(request: ParseRequest) -> List[DocumentChunk]:
                 content=content,
                 metadata=ChunkMetadata(
                     doc_id=request.doc_id,
-                    source=request.file_path,
-                    title=request.title or os.path.basename(request.file_path),
+                    source=source,
+                    title=request.title or os.path.basename(source) if source else f"doc_{request.doc_id}",
                     doc_type=request.doc_type,
                     chunk_type="text",
                     category_id=request.category_id,
                     chunk_index=index,
-                    total_chunks=total,
+                    total_chunks=len(parts),
                     content_hash=hash_content(content),
                 ),
             )
@@ -90,3 +121,20 @@ class DocumentIngestionService:
             "chunks_count": len(chunks),
             "inserted_count": inserted,
         }
+
+    async def ingest_from_url(self, download_url: str, doc_id: int, title: str = "",
+                                doc_type: str = "text", category_id: int | None = None) -> dict:
+        """从 URL 下载文档并灌入向量库。"""
+        text = await download_text(download_url)
+        chunks = build_chunks_from_text(text, doc_id=doc_id, title=title,
+                                         doc_type=doc_type, category_id=category_id)
+        inserted = self.vector_store.upsert_chunks(chunks)
+        return {
+            "status": "success",
+            "doc_id": doc_id,
+            "chunks_count": len(chunks),
+            "inserted_count": inserted,
+        }
+
+    def delete_by_doc_id(self, doc_id: int) -> dict:
+        return self.vector_store.delete_by_doc_id(doc_id)
