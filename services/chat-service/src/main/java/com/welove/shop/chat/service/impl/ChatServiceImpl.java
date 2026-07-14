@@ -119,6 +119,7 @@ public class ChatServiceImpl implements ChatService {
                                                    String gender, String skinType, java.util.List<String> preferenceTags,
                                                    boolean retry) {
         SseEmitter emitter = new SseEmitter(sseTimeout);
+        final long streamStartMs = System.currentTimeMillis();
         // 用 AtomicBoolean 标记是否已正常完成,防止多个回调同时触发写库双写。
         java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 把流式累积容器提升到闭包外,使 SseEmitter.onError/onCompletion/onTimeout 回调也能访问。
@@ -275,7 +276,8 @@ public class ChatServiceImpl implements ChatService {
                         aiMsg.setSources(sources[0].isEmpty() ? null : sources[0]);
                         aiMsg.setCreateTime(LocalDateTime.now());
                         msgMapper.insert(aiMsg);
-                        saveQaLog(userId, conversationId, content, answer, taskType[0].isEmpty() ? "shopping" : taskType[0], 0L);
+                        long streamDuration = System.currentTimeMillis() - streamStartMs;
+                        saveQaLog(userId, conversationId, content, answer, taskType[0].isEmpty() ? "shopping" : taskType[0], streamDuration);
                         // 发送 done 事件并关闭 (set finalized 已在上面 compareAndSet 完成)
                         emitter.send(SseEmitter.event().name("done").data(Map.of("messageId", aiMsg.getId())));
                         emitter.complete();
@@ -348,6 +350,7 @@ public class ChatServiceImpl implements ChatService {
         String safeContent = content != null ? content : "";
 
         SseEmitter emitter = new SseEmitter(sseTimeout);
+        final long streamStartMs = System.currentTimeMillis();
         java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
         StringBuilder answerBuilder = new StringBuilder();
         String[] taskType = {""};
@@ -484,7 +487,8 @@ public class ChatServiceImpl implements ChatService {
                         saveQaLog(userId, conversationId,
                                 safeContent.isEmpty() ? "[图片]" : safeContent,
                                 answer,
-                                taskType[0].isEmpty() ? "shopping" : taskType[0], 0L);
+                                taskType[0].isEmpty() ? "shopping" : taskType[0],
+                                System.currentTimeMillis() - streamStartMs);
                         emitter.send(SseEmitter.event().name("done").data(Map.of("messageId", aiMsg.getId())));
                         emitter.complete();
                     } catch (Exception e) {
