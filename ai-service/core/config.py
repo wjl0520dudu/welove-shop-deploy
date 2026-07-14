@@ -37,12 +37,21 @@ class Config:
     # schema 里预留 multimodal_vector 字段，Phase 2 图片就绪后灌图+文融合向量。
     MILVUS_PRODUCT_COLLECTION = os.getenv("MILVUS_PRODUCT_COLLECTION", "product_mm_collection")
 
+    # ── 商品多模态 v2 collection（实验链路，不影响线上旧 collection）──
+    # product_mm_v2 用于评测图文混合召回：text_dense + BM25 + image_vector + multimodal_vector。
+    MILVUS_PRODUCT_V2_COLLECTION = os.getenv("MILVUS_PRODUCT_V2_COLLECTION", "product_mm_v2")
+    MILVUS_IMAGE_DIM = int(os.getenv("MILVUS_IMAGE_DIM", "2560"))
+    MILVUS_MULTIMODAL_DIM = int(os.getenv("MILVUS_MULTIMODAL_DIM", "2560"))
+
     # tongyi-embedding-vision-flash（图+文多模态 embedding，Phase 2 启用）
     # MVP（Phase 1b）：商品文本向量仍走 DashScope text-embedding-v4，跟 KnowledgeAgent 保持同一 embedding。
     # 只有 multimodal_vector 字段等 Phase 2 才用 tongyi。
     DASH_SCOPE_MULTI_MODAL_EMBEDDING_MODEL = os.getenv(
-        "DASH_SCOPE_MULTI_MODAL_EMBEDDING_MODEL", "tongyi-embedding-vision-flash-2026-03-06",
+        "DASH_SCOPE_MULTI_MODAL_EMBEDDING_MODEL", "qwen3-vl-embedding",
     )
+    DASH_SCOPE_MULTI_MODAL_RERANK_MODEL = os.getenv("DASH_SCOPE_MULTI_MODAL_RERANK_MODEL", "qwen3-vl-rerank")
+    # 多模态 embedding / rerank 走百炼业务空间专属端点；不配置时使用 dashscope SDK 默认端点。
+    DASHSCOPE_MAAS_BASE_URL = os.getenv("DASHSCOPE_MAAS_BASE_URL", "")
 
     # ── DashScope（阿里云百炼）text-embedding-v4 ──
     # 现在是主用 embedding 通道（RAG 的 dense 向量走这里），OpenAI 通道保留仅供兼容。
@@ -91,8 +100,20 @@ class Config:
     PG_NAME = PG_LANGGRAPH_DB  # 别名，保持兼容
 
     # 5b. 业务主库（商品、用户、购物车等，从 MySQL 迁过来）
-    # Java 完成迁移后也接这个库。
-    PG_BUSINESS_DB = os.getenv("PG_BUSINESS_DB", "welove_shop_db")
+    # 单实例单库 + 多 schema：Java 微服务和 Python ai-service 共用同一个 PG 库，
+    # 通过 schema 隔离业务（product_svc / user_svc / trade_svc / chat_svc / admin_svc）。
+    PG_BUSINESS_DB = os.getenv("PG_BUSINESS_DB", "welove_shop_search")
+    # 业务库 search_path：连接后自动 SET，让 ORM 无前缀直接命中对应 schema 的表。
+    # 顺序按业务模块归属决定（product/user/trade/chat 优先命中自己的 schema，public 兜底）。
+    PG_BUSINESS_SEARCH_PATH = os.getenv(
+        "PG_BUSINESS_SEARCH_PATH",
+        "product_svc, user_svc, trade_svc, chat_svc, admin_svc, public",
+    )
+
+    # 5c. 商品图片 CDN base URL（多模态 embedding / rerank 调用时把相对路径拼成绝对 URL）
+    # PG.product.image_url 存的是相对路径（/weloveshop/products/xxx.jpg），前端拼接 CDN；
+    # DashScope multimodal API 要求 HTTP/HTTPS 绝对 URL，所以后端调用前也得拼。
+    IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "https://liangwenjun.oss-cn-hangzhou.aliyuncs.com")
 
     # 6. Java 后端服务地址（Python agent 通过 HTTP 调 Java 拿业务数据：收藏/浏览/订单）
     # ⚠️ 超时默认 2s：Java 挂了时快速失败，走 PG ORM 降级路径，避免每个工具调用卡 10s。

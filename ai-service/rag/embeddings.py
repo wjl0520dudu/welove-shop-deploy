@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from http import HTTPStatus
-from typing import List
+from typing import Any, Dict, List
 
 import dashscope
 from dashscope import TextEmbedding
@@ -124,3 +124,25 @@ def get_embeddings() -> DashScopeEmbeddings:
     if _embeddings_instance is None:
         _embeddings_instance = DashScopeEmbeddings()
     return _embeddings_instance
+
+
+def _build_search_text_v2(p: Dict[str, Any]) -> str:
+    """构建商品结构化检索文本（product_mm_v2 专用）。
+
+    旧 collection 的 `_build_search_text` 保持 title 重复的 BM25 权重策略；
+    v2 用字段标签 + 换行，给 dense embedding 和 BM25 共用。
+    """
+    field_map = {
+        "标题": p.get("title"),
+        "品牌": p.get("brand"),
+        "品类": p.get("category"),
+        "子品类": p.get("sub_category"),
+        "标签": p.get("tags"),
+        "描述": p.get("description"),
+    }
+    lines: list[str] = []
+    for label, value in field_map.items():
+        v = str(value).strip() if value else ""
+        if v:
+            lines.append(f"[{label}] {v}")
+    return "\n".join(lines)

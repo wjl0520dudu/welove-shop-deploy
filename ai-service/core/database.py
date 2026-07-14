@@ -3,9 +3,15 @@
 ai-service 的商品/用户/购物车等业务数据从 MySQL 迁移到 PostgreSQL，
 本模块提供业务库的 async session。
 
-- 连接的是 `PG_BUSINESS_DB`（默认 welove_shop_db）
-- 与 pg_search 模块的 langgraph 记忆库分开（那个是 PG_LANGGRAPH_DB / welove_shop_search）
-- 同一个 PostgreSQL 实例，不同 database，共用 PG_HOST / PG_USER / PG_PASSWORD
+架构：单实例 + 单库 + 多 schema
+- 库：`PG_BUSINESS_DB`（默认 welove_shop_search，跟 Java 微服务共用）
+- schema：product_svc / user_svc / trade_svc / chat_svc / admin_svc / public
+- 连接时自动 `SET search_path` 到 `PG_BUSINESS_SEARCH_PATH`（默认覆盖所有业务 schema），
+  ORM 里 `__tablename__ = "product"` 就能透明命中 `product_svc.product`
+
+与 langgraph 记忆库（checkpointer/store）的关系：
+- 记忆库变量 `PG_LANGGRAPH_DB`（= `PG_NAME`）现在也是 welove_shop_search（同一个库）
+- 但 checkpointer/store 表建在 public schema，跟业务 schema 天然隔离
 
 MySQL 兼容层：`build_mysql_url()` 仍保留，供 scripts/sync_mysql_to_pg.py 从 MySQL 拉数据用。
 业务代码不应再调用它。
@@ -46,11 +52,21 @@ def build_mysql_url() -> str:
 
 @lru_cache(maxsize=1)
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """业务库 (PostgreSQL) async session factory。"""
+    """业务库 (PostgreSQL) async session factory。
+
+    通过 asyncpg 的 server_settings 在每个连接建立时设置 search_path，
+    让 ORM 无 schema 前缀查询也能命中 product_svc / user_svc / trade_svc 等表。
+    """
     engine = create_async_engine(
         build_database_url(),
         pool_pre_ping=True,
         pool_recycle=3600,
+        # asyncpg 会把 server_settings 里的项作为 SET 命令一次性传给 server
+        connect_args={
+            "server_settings": {
+                "search_path": config.PG_BUSINESS_SEARCH_PATH,
+            },
+        },
     )
     return async_sessionmaker(
         engine, expire_on_commit=False, autoflush=False,
