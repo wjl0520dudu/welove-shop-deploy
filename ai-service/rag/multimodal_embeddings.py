@@ -2,8 +2,14 @@
 
 设计目标：
 - 图片向量和图文融合向量只服务 product_mm_v2 实验 collection；
-- embedding 调用失败时返回零向量，让文本召回链路仍然可用；
-- rerank 调用失败时保持候选原顺序，和 rag.reranker 的降级策略一致。
+- 图片相关错误（URL 无效、格式错误、DashScope 拒绝识别）抛
+  `MultimodalImageError`，由 caller 决定"直接失败"还是"降级零向量继续"：
+  - 接口层（用户查询）应 catch 抛出后返回 HTTP 400 让用户换图；
+  - 同步脚本（批量灌数据）应 catch 后写入零向量 + 记日志，避免单张
+    图挂了阻断整批。
+- 非图片错误（API key 未配置、DashScope 服务性异常）继续走"降级零向量"
+  路径，跟 rag.reranker 的降级策略一致，不阻塞主流程。
+- rerank 调用失败时保持候选原顺序（跟 embedding 一样降级不抛）。
 
 URL 归一化：
 - PG.product.image_url 存的是 CDN 相对路径（/weloveshop/products/xxx.jpg）；
@@ -23,6 +29,46 @@ from dashscope import MultiModalEmbedding, TextReRank
 from core.config import config
 
 logger = logging.getLogger("ai-service.rag.multimodal_embeddings")
+
+
+class MultimodalImageError(Exception):
+    """图片无法被多模态模型识别（URL 无效、404、格式错误等）。
+
+    区别于"DashScope 服务性错误"（API key 未配置、网络异常等）：后者返回
+    零向量降级，前者直接抛出让 caller 处理——因为图片本身有问题，重试
+    再多次也不会成功。
+
+    携带 `image_url`（归一化后的 URL） + `reason` 便于调用方日志或错误
+    响应组装。
+    """
+
+    def __init__(self, image_url: str, reason: str):
+        self.image_url = image_url
+        self.reason = reason
+        super().__init__(f"multimodal image invalid: {reason} url={image_url!r}")
+
+
+# DashScope 返回的图片类错误 code / message 特征（用于分辨"图片错误" vs
+# "服务性错误"）。命中任一即认为是图片问题。
+_IMAGE_ERROR_CODES = {"InvalidParameter", "InvalidURL", "DataInspectionFailed"}
+_IMAGE_ERROR_KEYWORDS = (
+    "image url",
+    "image is invalid",
+    "url is invalid",
+    "url or base64",
+    "download",
+    "unsupported image",
+    "invalid image",
+)
+
+
+def _is_image_error(code: str, message: str) -> bool:
+    """判断 DashScope 返回是不是图片本身的问题。"""
+    code_s = (code or "").strip()
+    msg_s = (message or "").lower()
+    if code_s in _IMAGE_ERROR_CODES:
+        return True
+    return any(kw in msg_s for kw in _IMAGE_ERROR_KEYWORDS)
 
 
 def _normalize_image_url(image_url: str | None) -> str | None:
@@ -132,7 +178,13 @@ class DashScopeMultimodalEmbeddings:
             dashscope.base_http_api_url = self.base_url
 
     def embed_image(self, image_url: str | None) -> list[float]:
-        """纯图片 embedding → image_vector。失败返回零向量。"""
+        """纯图片 embedding → image_vector。
+
+        返回值 / 抛出行为：
+        - image_url 为空 / api_key 未配置 → 返回零向量（不视为错误）
+        - DashScope 返回图片类错误 → 抛 MultimodalImageError
+        - 其他异常（网络、超时、服务不可用）→ 记日志、返回零向量（降级）
+        """
         image_url = _normalize_image_url(image_url)
         if not image_url:
             return [0.0] * self.image_dim
@@ -149,20 +201,31 @@ class DashScopeMultimodalEmbeddings:
                 dimension=self.image_dim,
             )
             if getattr(resp, "status_code", None) != HTTPStatus.OK:
+                code = str(getattr(resp, "code", "") or "")
+                message = str(getattr(resp, "message", "") or "")
+                if _is_image_error(code, message):
+                    raise MultimodalImageError(image_url, f"{code}: {message}")
                 logger.warning(
-                    "image embedding 调用失败: status=%s code=%s message=%s",
-                    getattr(resp, "status_code", ""),
-                    getattr(resp, "code", ""),
-                    getattr(resp, "message", ""),
+                    "image embedding 调用失败（服务性错误，降级零向量）: "
+                    "status=%s code=%s message=%s",
+                    getattr(resp, "status_code", ""), code, message,
                 )
                 return [0.0] * self.image_dim
             return _extract_first_embedding(resp, self.image_dim)
+        except MultimodalImageError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning("image embedding 异常，返回零向量：%s", e)
             return [0.0] * self.image_dim
 
     def embed_fusion(self, text: str | None, image_url: str | None) -> list[float]:
-        """图文融合 embedding → multimodal_vector。失败返回零向量。"""
+        """图文融合 embedding → multimodal_vector。
+
+        返回值 / 抛出行为（跟 embed_image 对齐）：
+        - image_url 为空 / api_key 未配置 → 返回零向量
+        - DashScope 返回图片类错误 → 抛 MultimodalImageError
+        - 其他异常 → 记日志、返回零向量（降级）
+        """
         image_url = _normalize_image_url(image_url)
         if not image_url:
             return [0.0] * self.multimodal_dim
@@ -185,14 +248,19 @@ class DashScopeMultimodalEmbeddings:
                 enable_fusion=True,
             )
             if getattr(resp, "status_code", None) != HTTPStatus.OK:
+                code = str(getattr(resp, "code", "") or "")
+                message = str(getattr(resp, "message", "") or "")
+                if _is_image_error(code, message):
+                    raise MultimodalImageError(image_url, f"{code}: {message}")
                 logger.warning(
-                    "fusion embedding 调用失败: status=%s code=%s message=%s",
-                    getattr(resp, "status_code", ""),
-                    getattr(resp, "code", ""),
-                    getattr(resp, "message", ""),
+                    "fusion embedding 调用失败（服务性错误，降级零向量）: "
+                    "status=%s code=%s message=%s",
+                    getattr(resp, "status_code", ""), code, message,
                 )
                 return [0.0] * self.multimodal_dim
             return _extract_first_embedding(resp, self.multimodal_dim)
+        except MultimodalImageError:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning("fusion embedding 异常，返回零向量：%s", e)
             return [0.0] * self.multimodal_dim

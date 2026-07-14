@@ -36,6 +36,10 @@ class ErrorCode:
     DB_UNAVAILABLE = "AI_DB_UNAVAILABLE"
     VECTOR_STORE_UNAVAILABLE = "AI_VECTOR_STORE_UNAVAILABLE"
 
+    # ── 多模态 ───────────────────────────────────
+    # 图片链接不可访问、格式非法、DashScope 拒绝识别等
+    MULTIMODAL_IMAGE_INVALID = "AI_MULTIMODAL_IMAGE_INVALID"
+
     # ── 外部依赖 ─────────────────────────────────
     JAVA_API_UNAVAILABLE = "AI_JAVA_API_UNAVAILABLE"
     JAVA_API_ERROR = "AI_JAVA_API_ERROR"
@@ -64,6 +68,7 @@ USER_MESSAGE_HINT: dict[str, str] = {
     ErrorCode.CHITCHAT_ERROR: "闲聊回复失败，请稍后重试",
     ErrorCode.DB_UNAVAILABLE: "数据服务暂时不可用",
     ErrorCode.VECTOR_STORE_UNAVAILABLE: "向量检索暂时不可用",
+    ErrorCode.MULTIMODAL_IMAGE_INVALID: "图片无法识别，请换一张清晰、可访问的图片再试",
     ErrorCode.JAVA_API_UNAVAILABLE: "业务服务暂时不可用",
     ErrorCode.JAVA_API_ERROR: "业务服务返回错误",
     ErrorCode.LOGIN_REQUIRED: "请登录后使用此功能",

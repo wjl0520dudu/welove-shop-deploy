@@ -24,6 +24,7 @@ from sqlalchemy import select, text                       # noqa: E402
 from core.database import get_session_factory             # noqa: E402
 from rag.embeddings import _build_search_text_v2, get_embeddings  # noqa: E402
 from rag.multimodal_embeddings import (                   # noqa: E402
+    MultimodalImageError,
     get_multimodal_embeddings,
     zero_image_vector,
     zero_multimodal_vector,
@@ -172,8 +173,24 @@ def build_product_mm_v2_rows(
     for product, search_text, dense_vector in zip(products, texts, dense_vectors):
         image_url = str(product.get("image_url") or "").strip()
         if image_url:
-            image_vector = mm.embed_image(image_url)
-            multimodal_vector = mm.embed_fusion(search_text, image_url)
+            # 单张商品图挂了不阻断整批：catch MultimodalImageError 后写零
+            # 向量占位。文本路（text_dense + BM25）仍能覆盖该商品。
+            try:
+                image_vector = mm.embed_image(image_url)
+            except MultimodalImageError as e:
+                logger.warning(
+                    "product_id=%s image embedding 拒识别，降级零向量：%s",
+                    product.get("product_id"), e,
+                )
+                image_vector = zero_image_vector()
+            try:
+                multimodal_vector = mm.embed_fusion(search_text, image_url)
+            except MultimodalImageError as e:
+                logger.warning(
+                    "product_id=%s fusion embedding 拒识别，降级零向量：%s",
+                    product.get("product_id"), e,
+                )
+                multimodal_vector = zero_multimodal_vector()
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
         else:

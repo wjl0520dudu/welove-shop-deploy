@@ -130,11 +130,49 @@ class TestMultimodalRerank:
         assert out[0]["score"] == 0.99
         assert "multimodal_rerank" in out[0]["recall_sources"]
 
-    def test_image_embedding_failure_returns_zero_vector(self):
+    def test_image_embedding_service_error_returns_zero_vector(self):
+        """服务性错误（网络异常、超时等）→ 降级零向量，不抛异常。"""
         client = DashScopeMultimodalEmbeddings(api_key="test-key", image_dim=3, base_url="")
 
         with patch("rag.multimodal_embeddings.MultiModalEmbedding.call", side_effect=RuntimeError("boom")):
             assert client.embed_image("http://example.com/a.jpg") == [0.0, 0.0, 0.0]
+
+    def test_image_embedding_image_error_raises(self):
+        """DashScope 返回 InvalidParameter 等图片错误 → 抛 MultimodalImageError。"""
+        from rag.multimodal_embeddings import MultimodalImageError
+
+        client = DashScopeMultimodalEmbeddings(api_key="test-key", image_dim=3, base_url="")
+
+        # 模拟 DashScope 返回 InvalidParameter
+        fake_resp = MagicMock()
+        fake_resp.status_code = 400
+        fake_resp.code = "InvalidParameter"
+        fake_resp.message = "Image URL or Base64 is invalid"
+
+        with patch("rag.multimodal_embeddings.MultiModalEmbedding.call", return_value=fake_resp):
+            import pytest
+            with pytest.raises(MultimodalImageError) as exc:
+                client.embed_image("http://example.com/broken.jpg")
+            assert exc.value.image_url == "http://example.com/broken.jpg"
+            assert "InvalidParameter" in exc.value.reason
+
+    def test_fusion_embedding_image_error_raises(self):
+        """embed_fusion 同样对图片错误抛异常。"""
+        from rag.multimodal_embeddings import MultimodalImageError
+
+        client = DashScopeMultimodalEmbeddings(
+            api_key="test-key", multimodal_dim=3, base_url="",
+        )
+
+        fake_resp = MagicMock()
+        fake_resp.status_code = 400
+        fake_resp.code = "InvalidURL"
+        fake_resp.message = "invalid image url"
+
+        with patch("rag.multimodal_embeddings.MultiModalEmbedding.call", return_value=fake_resp):
+            import pytest
+            with pytest.raises(MultimodalImageError):
+                client.embed_fusion("text", "http://example.com/broken.jpg")
 
 
 class TestSyncRows:
@@ -171,3 +209,50 @@ class TestSyncRows:
         assert row["text_dense_vector"] == [0.1, 0.2]
         assert row["image_vector"] == [0.3, 0.4, 0.5]
         assert row["multimodal_vector"] == [0.6, 0.7, 0.8]
+
+    def test_build_rows_downgrades_on_image_error(self):
+        """同步脚本对 MultimodalImageError 降级零向量，不阻断批处理。"""
+        from rag.multimodal_embeddings import MultimodalImageError
+
+        scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+        sys.path.insert(0, str(scripts_dir))
+        import sync_products_to_milvus_v2 as sync_v2  # noqa: E402
+
+        products = [
+            {
+                "product_id": 1, "title": "A", "image_url": "http://ok.jpg",
+                "description": "", "brand": "", "category": "", "sub_category": "",
+                "tags": "", "base_price": 0, "status": 1,
+            },
+            {
+                "product_id": 2, "title": "B", "image_url": "http://broken.jpg",
+                "description": "", "brand": "", "category": "", "sub_category": "",
+                "tags": "", "base_price": 0, "status": 1,
+            },
+        ]
+        emb = MagicMock()
+        emb.embed_documents.return_value = [[0.1], [0.2]]
+
+        # 第二个商品 embed_image 抛异常，验证降级
+        mm = MagicMock()
+        mm.embed_image.side_effect = [
+            [1.0, 1.0, 1.0],
+            MultimodalImageError("http://broken.jpg", "InvalidParameter: 404"),
+        ]
+        mm.embed_fusion.side_effect = [
+            [2.0, 2.0, 2.0],
+            MultimodalImageError("http://broken.jpg", "InvalidParameter: 404"),
+        ]
+
+        with patch.object(sync_v2, "get_embeddings", return_value=emb), \
+             patch.object(sync_v2, "get_multimodal_embeddings", return_value=mm), \
+             patch.object(sync_v2, "zero_image_vector", return_value=[0.0, 0.0, 0.0]), \
+             patch.object(sync_v2, "zero_multimodal_vector", return_value=[0.0, 0.0, 0.0]):
+            rows = sync_v2.build_product_mm_v2_rows(products, sleep_seconds=0)
+
+        # 第一个正常，第二个降级零向量，两条 row 都写出了
+        assert len(rows) == 2
+        assert rows[0]["image_vector"] == [1.0, 1.0, 1.0]
+        assert rows[0]["multimodal_vector"] == [2.0, 2.0, 2.0]
+        assert rows[1]["image_vector"] == [0.0, 0.0, 0.0]
+        assert rows[1]["multimodal_vector"] == [0.0, 0.0, 0.0]

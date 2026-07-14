@@ -5,6 +5,7 @@ import logging
 from typing import AsyncIterator, Optional
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import Field
@@ -14,10 +15,15 @@ from api.schemas import AIResponse, ChatRequest
 from assistant.graph import AssistantGraph
 from core.errors import ErrorCode
 from core.llm import get_llm
+from rag.multimodal_embeddings import MultimodalImageError, _normalize_image_url
 
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 logger = logging.getLogger("ai-service.assistant")
+
+# 多模态接口 HEAD 预检超时（秒）。图片放在自己 CDN 上，正常 100-300ms 内响应。
+# 超过 3 秒当作不可达处理，避免拖慢用户请求。
+_IMAGE_HEAD_TIMEOUT = 3.0
 
 
 class AssistantRunRequest(ChatRequest):
@@ -178,13 +184,81 @@ class MultimodalAssistantRunRequest(AssistantRunRequest):
 
 
 def _validate_image_url(image_url: Optional[str]) -> str:
-    """校验图片 URL 非空，返回 strip 后的字符串。"""
+    """校验图片 URL 非空 + 归一化。真正的可达性检查走 _precheck_image_reachable。"""
     if not image_url or not str(image_url).strip():
         raise HTTPException(
             status_code=400,
             detail="image_url is required for multimodal endpoints",
         )
     return str(image_url).strip()
+
+
+async def _precheck_image_reachable(image_url: str, trace_id: str) -> None:
+    """HEAD 预检图片是否可访问。不可访问直接抛 HTTPException 400。
+
+    第一道防线：本地一次 HEAD 请求（100-300ms）能拦截 90% 的坏图（URL 拼错、
+    图被删、域名不对）。DashScope 那道兜底再拦异常图（格式非法、被 CDN 拒绝
+    识别）。
+
+    - 相对路径会先走 _normalize_image_url 拼 IMAGE_BASE_URL 再 HEAD；
+    - 归一化后仍无绝对 URL（比如 IMAGE_BASE_URL 未配 + 用户传相对路径）→ 400；
+    - 少数 CDN 不支持 HEAD 只支持 GET，容错：非 200/405 才判失败。
+      405 Method Not Allowed 说明服务器认识资源但拒绝 HEAD，视作可达；
+    - 网络超时 / 连接失败 → 400，让用户知道图片不可达而不是"AI 出错"。
+    """
+    normalized = _normalize_image_url(image_url)
+    if not normalized or not normalized.lower().startswith(("http://", "https://")):
+        logger.warning(
+            "trace=%s image_url 未能拼成绝对 URL: raw=%r normalized=%r",
+            trace_id, image_url, normalized,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+                "message": "图片地址无效（无法拼成绝对 URL）",
+            },
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=_IMAGE_HEAD_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.head(normalized)
+    except httpx.TimeoutException:
+        logger.warning("trace=%s image HEAD 超时: %s", trace_id, normalized)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+                "message": "图片地址访问超时，请检查后重试",
+            },
+        )
+    except httpx.HTTPError as e:
+        logger.warning("trace=%s image HEAD 失败: %s (%s)", trace_id, normalized, e)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+                "message": f"图片地址无法访问：{e}",
+            },
+        )
+
+    # 200 = 可达；405 = 服务器拒 HEAD 但资源存在（少数 CDN），继续放行让 DashScope 兜底；
+    # 其他一律判失败。
+    if resp.status_code == 200:
+        return
+    if resp.status_code == 405:
+        logger.debug("trace=%s image HEAD 返回 405，放行让 DashScope 兜底: %s",
+                     trace_id, normalized)
+        return
+
+    logger.warning("trace=%s image HEAD %d: %s", trace_id, resp.status_code, normalized)
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+            "message": f"图片地址不可访问（HTTP {resp.status_code}）",
+        },
+    )
 
 
 @router.post("/multimodal/run", response_model=AIResponse)
@@ -195,11 +269,20 @@ async def run_multimodal_assistant(
     """多模态非流式：图 + 文 → 一次性 AIResponse（含 product_cards）。
 
     Apifox 测试更简单：请求发出后一次返回商品卡片列表和推荐话术。
+
+    图片校验两道防线：
+    - HEAD 预检（本地 100-300ms）：拦 URL 拼错 / 图删了 / 域名错
+    - DashScope MultimodalImageError（图片格式非法、拒绝识别）
+    任一失败都返回 HTTP 400 + error_code=AI_MULTIMODAL_IMAGE_INVALID
     """
     image_url = _validate_image_url(request.image_url)
 
     llm = get_llm()
     trace_id = getattr(http_request.state, "trace_id", None) or str(uuid4())
+
+    # 第一道防线：HEAD 预检，失败直接抛 HTTPException 400（不进 graph）
+    await _precheck_image_reachable(image_url, trace_id)
+
     if llm is None:
         return build_error_response(
             "LLM 未配置，多模态 Agent 暂不可用。",
@@ -219,6 +302,17 @@ async def run_multimodal_assistant(
             jwt_token=request.jwt_token,
             trace_id=trace_id,
             image_url=image_url,
+        )
+    except MultimodalImageError as e:
+        # 第二道防线：HEAD 通过但 DashScope 拒识别（图片格式非法 / CDN 拒绝
+        # 二次访问 / 图被识别成禁用内容）
+        logger.warning("trace=%s DashScope 拒识别: %s", trace_id, e)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+                "message": f"图片无法识别：{e.reason}",
+            },
         )
     except Exception:
         logger.exception("Multimodal assistant run failed")
@@ -241,11 +335,19 @@ async def stream_multimodal_assistant(
 
     事件类型与 /stream 一致（start/route/token/tool_call/tool_result/final/
     error/done）。图搜的推荐话术会通过 token 事件流式吐出。
+
+    图片校验策略跟 /multimodal/run 一致：
+    - HEAD 预检在开流前完成，失败 HTTP 400（不发一帧 SSE）
+    - 开流后 DashScope 拒识别 → 发 error 事件（error_code=IMAGE_INVALID）
+      再 done，SSE 语义完整
     """
     image_url = _validate_image_url(request.image_url)
 
     llm = get_llm()
     trace_id = getattr(http_request.state, "trace_id", None) or str(uuid4())
+
+    # 开流前预检失败，直接 HTTP 400（不进 StreamingResponse，让前端能 catch）
+    await _precheck_image_reachable(image_url, trace_id)
 
     async def event_stream() -> AsyncIterator[bytes]:
         if llm is None:
@@ -275,6 +377,14 @@ async def stream_multimodal_assistant(
                     )
                     break
                 yield _sse_frame(event["type"], event.get("data") or {}).encode("utf-8")
+        except MultimodalImageError as e:
+            logger.warning("trace=%s DashScope 拒识别（流式）: %s", trace_id, e)
+            yield _sse_frame("error", {
+                "trace_id": trace_id,
+                "error_code": ErrorCode.MULTIMODAL_IMAGE_INVALID,
+                "message": f"图片无法识别：{e.reason}",
+            }).encode("utf-8")
+            yield _sse_frame("done", {}).encode("utf-8")
         except Exception as e:  # noqa: BLE001
             logger.exception("Multimodal assistant stream failed")
             yield _sse_frame("error", {
