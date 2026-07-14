@@ -14,6 +14,15 @@ spring:
   main:
     web-application-type: servlet            # 强制 Tomcat(引入 webflux 后防止 Netty 抢占)
 
+  # ---------- 文件上传 ----------
+  # 默认 Spring Boot 上限只有 1MB,聊天图片上传需要放宽到 10MB 以上。
+  # 知识库文档(PDF/Word)也走同一个 servlet,顺带一起放到 20MB。
+  # 单个 field 的上限用 max-file-size,整个 request 用 max-request-size。
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
   # ---------- 共享配置(从 common-storage 资源导入) ----------
   # 继承 cloud.storage.* 默认值(bucket / endpoint / 凭证 env 注入等)
   # 本服务差异化项(如下方 chat/ 前缀)在本文件内覆盖
@@ -106,6 +115,12 @@ chat-service:
   sse:
     # SseEmitter 超时(毫秒)
     timeout: 300000
+  upload:
+    image:
+      # 单张聊天图片大小上限(字节, 默认 10MB)
+      max-bytes: 10485760
+      # 白名单 MIME(逗号分隔)。不接受 application/octet-stream 等模糊类型
+      allowed-mime: image/jpeg,image/png,image/webp,image/gif
 
 # ---------- 管理端点 ----------
 management:

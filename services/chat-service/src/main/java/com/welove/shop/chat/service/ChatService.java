@@ -3,7 +3,9 @@ package com.welove.shop.chat.service;
 import com.welove.shop.chat.dto.FeedbackRequest;
 import com.welove.shop.chat.entity.Conversation;
 import com.welove.shop.chat.entity.Message;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +23,26 @@ public interface ChatService {
             Long userId, Long conversationId, String content, String username,
             String jwtToken, String gender, String skinType, java.util.List<String> preferenceTags,
             boolean retry);
+    /**
+     * 多模态图文流式发送消息(SSE)。
+     * <p>与 {@link #sendStreamMessage} 的区别:
+     * <ul>
+     *   <li>额外接收 {@code imageUrl}(先走 /chat/upload/image 拿到的 OSS URL)</li>
+     *   <li>{@code content} 允许为空("纯图搜索"场景)</li>
+     *   <li>转发到 ai-service /assistant/multimodal/stream 而非 /assistant/stream</li>
+     *   <li>user 消息落库时 message_type=multimodal_image 且写入 image_url</li>
+     * </ul></p>
+     */
+    org.springframework.web.servlet.mvc.method.annotation.SseEmitter sendMultimodalStreamMessage(
+            Long userId, Long conversationId, String content, String imageUrl,
+            String username, String jwtToken, String gender, String skinType,
+            java.util.List<String> preferenceTags, boolean retry);
+    /**
+     * 聊天图片上传:走 common-storage 的 StorageService,存到 OSS 后返回 {objectKey, url}。
+     * <p>校验:MIME 必须是 image/*,大小 &le; 上限(默认 10MB,可通过配置调整)。</p>
+     * <p>失败抛 {@link IllegalArgumentException},由全局异常处理器转 400。</p>
+     */
+    Map<String, Object> uploadChatImage(MultipartFile file) throws IOException;
     /** 删除会话(级联消息)。 */
     void deleteConversation(Long conversationId);
     /** 更新会话(标题/置顶)。 */

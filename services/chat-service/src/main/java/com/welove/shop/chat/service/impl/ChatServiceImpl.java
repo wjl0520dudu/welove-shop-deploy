@@ -12,12 +12,14 @@ import com.welove.shop.chat.mapper.QaLogMapper;
 import com.welove.shop.chat.service.AiService;
 import com.welove.shop.chat.service.ConversationContextService;
 import com.welove.shop.chat.service.ChatService;
+import com.welove.shop.common.storage.service.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
@@ -25,8 +27,11 @@ import reactor.core.publisher.Flux;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 @Slf4j
@@ -38,6 +43,10 @@ public class ChatServiceImpl implements ChatService {
     private static final String STATUS_TRUNCATED = "truncated";
     private static final String STOP_USER_ABORT = "user_abort";
     private static final String STOP_SERVER = "server_error";
+    /** message.message_type: 纯文本消息。 */
+    private static final String MSG_TYPE_TEXT = "text";
+    /** message.message_type: 用户上传图片的多模态消息(assistant 消息不用这个 type)。 */
+    private static final String MSG_TYPE_MULTIMODAL_IMAGE = "multimodal_image";
     /** 截断去重窗口(秒):同 conversation + 同 contentPrefix 在此窗口内只写一条。 */
     private static final int TRUNC_DEDUP_SECONDS = 60;
     private final ConversationMapper convMapper;
@@ -48,8 +57,12 @@ public class ChatServiceImpl implements ChatService {
     private final StringRedisTemplate redisTemplate;
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    private final StorageService storageService;
     @Value("${chat-service.context.dedup-window-seconds:30}") private long dedupWindow;
     @Value("${chat-service.sse.timeout:300000}") private long sseTimeout;
+    @Value("${chat-service.upload.image.max-bytes:10485760}") private long imageMaxBytes;
+    @Value("${chat-service.upload.image.allowed-mime:image/jpeg,image/png,image/webp,image/gif}")
+    private String imageAllowedMime;
 
     // ---------- CRUD ----------
     @Override public Conversation createConversation(Long userId, String title) {
@@ -310,6 +323,252 @@ public class ChatServiceImpl implements ChatService {
         return emitter;
     }
 
+    // ---------- SSE multimodal stream (图 + 文) ----------
+    /**
+     * 多模态图文流式发送消息。与 {@link #sendStreamMessage} 的关键差异在下方注释中
+     * 用 "MM-DIFF" 标记,便于对照:
+     * <ul>
+     *   <li>MM-DIFF-1:aiBody 多带一个 image_url</li>
+     *   <li>MM-DIFF-2:WebClient uri 走 /assistant/multimodal/stream</li>
+     *   <li>MM-DIFF-3:saveUserMessage 传 imageUrl,落 message_type=multimodal_image</li>
+     *   <li>MM-DIFF-4:content 允许为空(纯图搜索);dedup 用带 [MM] 前缀区分</li>
+     * </ul>
+     * 其余(生命周期回调、doOnComplete 落 assistant、doOnCancel 截断、生成标题)
+     * 与纯文本流一致 —— 直接照抄以保证行为等价,未来若发现更多多模态形式再重构成
+     * 私有 core 方法。
+     */
+    @Override public SseEmitter sendMultimodalStreamMessage(Long userId, Long conversationId, String content,
+                                                             String imageUrl, String username, String jwtToken,
+                                                             String gender, String skinType, java.util.List<String> preferenceTags,
+                                                             boolean retry) {
+        // MM-DIFF-4:content 可空,但 imageUrl 必须有 —— 控制器已经做了非空校验,这里防御性再判一次
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            throw new IllegalArgumentException("imageUrl 不能为空(多模态流式请求)");
+        }
+        String safeContent = content != null ? content : "";
+
+        SseEmitter emitter = new SseEmitter(sseTimeout);
+        java.util.concurrent.atomic.AtomicBoolean finalized = new java.util.concurrent.atomic.AtomicBoolean(false);
+        StringBuilder answerBuilder = new StringBuilder();
+        String[] taskType = {""};
+        java.util.List<Map<String, Object>>[] productCards = new java.util.List[]{new java.util.ArrayList<>()};
+        Map<String, Object>[] confirmCard = new Map[]{null};
+        Map<String, Object>[] cartSelection = new Map[]{null};
+        String[] sources = {""};
+
+        emitter.onCompletion(() -> log.debug("SseEmitter[MM] onCompletion conv={}", conversationId));
+        emitter.onTimeout(() -> {
+            if (finalized.compareAndSet(false, true)) {
+                log.info("SseEmitter[MM] onTimeout, persist truncated conv={}", conversationId);
+                persistTruncatedInternal(conversationId, answerBuilder.toString(),
+                        productCards[0], confirmCard[0], cartSelection[0],
+                        taskType[0], STOP_USER_ABORT);
+            }
+            emitter.complete();
+        });
+        emitter.onError((ex) -> {
+            if (finalized.compareAndSet(false, true)) {
+                String exMsg = ex == null ? "" : ex.getMessage();
+                log.info("SseEmitter[MM] onError (client likely disconnected): {}, persist truncated conv={}",
+                        exMsg == null ? "(null)" : exMsg, conversationId);
+                persistTruncatedInternal(conversationId, answerBuilder.toString(),
+                        productCards[0], confirmCard[0], cartSelection[0],
+                        taskType[0], STOP_USER_ABORT);
+            }
+        });
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                // MM-DIFF-4:dedup key 加 [MM] 前缀,避免与纯文本流冲突;纯图搜索时 safeContent 为空,
+                // isDuplicate 仍按 hashCode 去重(空字符串 hash 稳定,窗口内不会重复触发,符合预期)
+                String dedupKey = "[MM]" + safeContent + "|" + imageUrl;
+                if (!retry && isDuplicate(conversationId, dedupKey)) { emitter.complete(); return; }
+                // MM-DIFF-3:落 user 消息时带 imageUrl
+                if (!retry) saveUserMessage(conversationId, safeContent, imageUrl);
+                if (!retry && isFirstMessage(conversationId)) {
+                    // 纯图搜索没有 content,用占位符生成标题;LLM 侧看到 [图片] 会尝试生成"图片搜索"类标题
+                    aiService.generateTitle(conversationId, safeContent.isEmpty() ? "[图片]" : safeContent);
+                }
+
+                Map<String, Object> aiBody = new java.util.HashMap<>();
+                aiBody.put("question", safeContent);
+                aiBody.put("image_url", imageUrl);  // MM-DIFF-1
+                aiBody.put("conversation_id", conversationId.toString());
+                aiBody.put("user_id", userId.toString());
+                aiBody.put("username", username);
+                aiBody.put("is_admin", false);
+                if (jwtToken != null) aiBody.put("jwt_token", jwtToken);
+                if (gender != null) aiBody.put("gender", gender);
+                if (skinType != null) aiBody.put("skin_type", skinType);
+                if (preferenceTags != null) aiBody.put("preference_tags", preferenceTags);
+
+                org.springframework.core.ParameterizedTypeReference<org.springframework.http.codec.ServerSentEvent<String>> sseType =
+                        new org.springframework.core.ParameterizedTypeReference<>() {};
+                Flux<org.springframework.http.codec.ServerSentEvent<String>> flux = webClient.post()
+                        .uri("/assistant/multimodal/stream")  // MM-DIFF-2
+                        .accept(org.springframework.http.MediaType.TEXT_EVENT_STREAM)
+                        .bodyValue(aiBody)
+                        .retrieve().bodyToFlux(sseType);
+
+                flux.doOnNext(sse -> {
+                    String eventType = sse.event() != null ? sse.event() : "message";
+                    String data = sse.data();
+                    if (data == null || data.isEmpty()) return;
+
+                    try {
+                        if (!"done".equals(eventType)) {
+                            emitter.send(SseEmitter.event().name(eventType).data(data));
+                        }
+                    } catch (IOException ioe) {
+                        throw new RuntimeException(ioe);
+                    }
+
+                    Map<String, Object> event;
+                    try {
+                        event = objectMapper.readValue(data, Map.class);
+                    } catch (IOException je) {
+                        log.warn("SSE[MM] data JSON parse failed: {}", je.getMessage());
+                        return;
+                    }
+                    switch (eventType) {
+                        case "token":
+                            answerBuilder.append(event.getOrDefault("content", ""));
+                            break;
+                        case "route":
+                            if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                            break;
+                        case "final":
+                            if (answerBuilder.length() == 0 && event.containsKey("answer")) {
+                                answerBuilder.append(event.get("answer"));
+                            }
+                            if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
+                            if (event.get("product_cards") instanceof java.util.List<?> pc) {
+                                productCards[0] = (java.util.List<Map<String, Object>>) pc;
+                            }
+                            if (event.get("confirm_card") instanceof Map<?, ?> cc) {
+                                confirmCard[0] = (Map<String, Object>) cc;
+                            }
+                            if (event.get("cart_selection") instanceof Map<?, ?> cs) {
+                                cartSelection[0] = (Map<String, Object>) cs;
+                            }
+                            if (event.containsKey("sources")) {
+                                try {
+                                    sources[0] = objectMapper.writeValueAsString(event.get("sources"));
+                                } catch (IOException ignored) { }
+                            }
+                            break;
+                        case "error":
+                            // ai-service 侧 DashScope 拒识别 / HEAD 预检失败会走这里
+                            // (HTTP 400 情况已被 WebClient 转成 doOnError,这里主要是流内 error 帧)
+                            log.warn("AI[MM] stream error: {}", event.getOrDefault("message", ""));
+                            break;
+                    }
+                }).doOnComplete(() -> {
+                    if (!finalized.compareAndSet(false, true)) return;
+                    try {
+                        String answer = answerBuilder.toString();
+                        Message aiMsg = new Message();
+                        aiMsg.setConversationId(conversationId);
+                        aiMsg.setRole("assistant");
+                        aiMsg.setContent(answer.isEmpty() ? "AI 暂时无法回复,请稍后再试" : answer);
+                        // assistant 消息本身不带图,message_type 仍是 text
+                        aiMsg.setMessageType(MSG_TYPE_TEXT);
+                        aiMsg.setTaskType(taskType[0].isEmpty() ? "shopping" : taskType[0]);
+                        aiMsg.setStatus(STATUS_DONE);
+                        if (!productCards[0].isEmpty()) aiMsg.setProductCards(productCards[0]);
+                        if (confirmCard[0] != null) aiMsg.setConfirmCard(confirmCard[0]);
+                        if (cartSelection[0] != null) aiMsg.setCartSelection(cartSelection[0]);
+                        aiMsg.setSources(sources[0].isEmpty() ? null : sources[0]);
+                        aiMsg.setCreateTime(LocalDateTime.now());
+                        msgMapper.insert(aiMsg);
+                        saveQaLog(userId, conversationId,
+                                safeContent.isEmpty() ? "[图片]" : safeContent,
+                                answer,
+                                taskType[0].isEmpty() ? "shopping" : taskType[0], 0L);
+                        emitter.send(SseEmitter.event().name("done").data(Map.of("messageId", aiMsg.getId())));
+                        emitter.complete();
+                    } catch (Exception e) {
+                        log.error("SSE[MM] onComplete save failed", e);
+                        try {
+                            emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                        } catch (IOException ex) { }
+                        emitter.complete();
+                    }
+                }).doOnError(e -> {
+                    if (!finalized.compareAndSet(false, true)) {
+                        log.debug("Reactor[MM] doOnError but already finalized conv={}", conversationId);
+                        return;
+                    }
+                    log.error("SSE[MM] stream error (ai-service upstream)", e);
+                    String answer = answerBuilder.toString();
+                    Long errId = persistTruncatedInternal(conversationId, answer,
+                            productCards[0], confirmCard[0], cartSelection[0],
+                            taskType[0], STOP_SERVER);
+                    try {
+                        Map<String, Object> payload = new java.util.HashMap<>();
+                        // 图片类错误(ai-service /assistant/multimodal/{run,stream} 返回 HTTP 400)会走到这里
+                        // WebClient 抛的是 WebClientResponseException,e.getMessage() 里可能含
+                        // "AI_MULTIMODAL_IMAGE_INVALID",前端据此展示"图片无法识别,请换一张"
+                        payload.put("content", String.valueOf(e.getMessage()));
+                        if (errId != null) payload.put("messageId", errId);
+                        emitter.send(SseEmitter.event().name("error").data(payload));
+                    } catch (IOException ex) { }
+                    emitter.complete();
+                }).subscribe();
+            } catch (Exception e) {
+                log.error("SSE[MM] setup error", e);
+                if (finalized.compareAndSet(false, true)) {
+                    persistTruncatedInternal(conversationId, "", null, null, null, "", STOP_SERVER);
+                }
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(Map.of("content", e.getMessage())));
+                    emitter.complete();
+                } catch (IOException ex) { emitter.completeWithError(ex); }
+            }
+        });
+        return emitter;
+    }
+
+    // ---------- 聊天图片上传 ----------
+    /**
+     * 上传聊天图片到对象存储。走 common-storage 的 StorageService(自动装配为 OSS 或本地磁盘)。
+     * 校验规则:
+     * <ul>
+     *   <li>MIME 必须在 {@code chat-service.upload.image.allowed-mime} 白名单内</li>
+     *   <li>大小 &le; {@code chat-service.upload.image.max-bytes}(默认 10MB)</li>
+     * </ul>
+     * 校验失败抛 {@link IllegalArgumentException},由全局异常处理转 400。
+     */
+    @Override public Map<String, Object> uploadChatImage(MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("上传文件为空");
+        }
+        // 1) 大小校验
+        long size = file.getSize();
+        if (size > imageMaxBytes) {
+            throw new IllegalArgumentException(
+                    "图片大小 " + size + " 字节超过上限 " + imageMaxBytes + " 字节");
+        }
+        // 2) MIME 校验:白名单精确匹配,拒绝 application/octet-stream 等模糊类型
+        String contentType = file.getContentType();
+        Set<String> allowed = new HashSet<>(Arrays.asList(imageAllowedMime.split(",")));
+        // 白名单里都是 image/xxx 形式,做个 trim 防意外空格
+        allowed.removeIf(String::isBlank);
+        Set<String> normalized = new HashSet<>();
+        for (String m : allowed) normalized.add(m.trim().toLowerCase());
+        if (contentType == null || !normalized.contains(contentType.toLowerCase())) {
+            throw new IllegalArgumentException("不支持的图片类型:" + contentType + ",允许:" + normalized);
+        }
+        // 3) 存 OSS
+        String objectKey = storageService.put(file);
+        String url = storageService.getUrl(objectKey);
+        log.info("[uploadChatImage] key={} url={} size={} mime={}", objectKey, url, size, contentType);
+        Map<String, Object> res = new java.util.HashMap<>();
+        res.put("objectKey", objectKey);
+        res.put("url", url);
+        return res;
+    }
+
     // ---------- 反馈 ----------
     @Override public void submitFeedback(FeedbackRequest req) {
         Message msg = msgMapper.selectById(req.getMessageId());
@@ -390,9 +649,27 @@ public class ChatServiceImpl implements ChatService {
         return Boolean.FALSE.equals(ok);
     }
     private Message saveUserMessage(Long convId, String content) {
+        return saveUserMessage(convId, content, null);
+    }
+    /**
+     * 落库 user 消息。imageUrl 非空 → message_type=multimodal_image + image_url 写入;
+     * 否则走原有 message_type=text 逻辑。允许 content 为空(纯图搜索场景),此时
+     * content 落成占位符方便 UI 渲染。
+     */
+    private Message saveUserMessage(Long convId, String content, String imageUrl) {
         Message m = new Message();
-        m.setConversationId(convId); m.setRole("user"); m.setContent(content);
-        m.setMessageType("text"); m.setCreateTime(LocalDateTime.now());
+        m.setConversationId(convId);
+        m.setRole("user");
+        String safeContent = content != null ? content : "";
+        boolean hasImage = imageUrl != null && !imageUrl.isEmpty();
+        if (safeContent.isEmpty() && hasImage) {
+            // 纯图搜索:用占位符方便消息列表 UI 显示"[图片]"
+            safeContent = "[图片]";
+        }
+        m.setContent(safeContent);
+        m.setMessageType(hasImage ? MSG_TYPE_MULTIMODAL_IMAGE : MSG_TYPE_TEXT);
+        if (hasImage) m.setImageUrl(imageUrl);
+        m.setCreateTime(LocalDateTime.now());
         msgMapper.insert(m);
         return m;
     }

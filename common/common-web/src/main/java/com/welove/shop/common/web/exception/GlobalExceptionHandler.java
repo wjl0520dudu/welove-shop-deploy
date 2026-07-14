@@ -137,6 +137,20 @@ public class GlobalExceptionHandler {
         return Result.fail(ErrorCode.NOT_FOUND);
     }
 
+    /**
+     * IllegalArgumentException:业务侧手抛的参数校验失败(比如聊天图片超过 10MB、
+     * MIME 不在白名单)。语义上等同 400 Bad Request,不当作 500 兜底,让前端能
+     * 明确知道是"用户输入问题"而非"服务出错"。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Result<Void> handleIllegalArgument(IllegalArgumentException ex,
+                                              HttpServletRequest request) {
+        log.warn("[IllegalArgument] {} {} - {}",
+                request.getMethod(), request.getRequestURI(), ex.getMessage());
+        return Result.fail(ErrorCode.PARAM_INVALID, ex.getMessage());
+    }
+
     // ---------- 兜底 ----------
 
     @ExceptionHandler(Exception.class)
