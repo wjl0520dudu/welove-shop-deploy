@@ -177,3 +177,9 @@ admin-bff/target/
 /db/*.py
 /db/*.md
 # db/scripts/ 白名单:微服务阶段一次性迁移脚本(如 export_seed.py)入库
+# -------- Token / 测试临时文件 --------
+.admin_token.txt
+.token_resp.json
+.user_login_resp.json
+.user_token.txt
+web/package-lock.json
