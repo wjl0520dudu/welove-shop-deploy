@@ -179,7 +179,9 @@ function dispatchChatEvent({ event, data }, cb) {
         if (cart) cb.onCartSelection && cb.onCartSelection(cart)
         const t = obj.task_type || obj.taskType
         if (t) cb.onRouted && cb.onRouted(t)
-        cb.onFinalText && cb.onFinalText(obj.answer || obj.content || '')
+        // final 是编排链路的权威聚合结果；同时把完整 payload 传给页面，
+        // 页面可以据 task_type 判断是否需要用聚合答案覆盖已流出的子任务标题/token。
+        cb.onFinalText && cb.onFinalText(obj.answer || obj.content || '', obj)
       }
       break
     }

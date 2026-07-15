@@ -447,8 +447,12 @@ export default {
         onCartSelection: (card) => { assistant.cartSelection = card || null; this.scrollToBottom() },
         onRouted: (t) => { assistant.taskType = t || '' },
         // final 兜底：若某类回复没有逐 token 流（如 unknown/error 静态回复），用 final 的完整答案补上
-        onFinalText: (text) => {
-          if (text && !gotText) {
+        onFinalText: (text, finalPayload = {}) => {
+          const finalTaskType = finalPayload.task_type || finalPayload.taskType || assistant.taskType
+          const isOrchestratorFinal = finalTaskType === 'orchestrator'
+          // Orchestrator 会先流出子任务标题/子答案，final.answer 才是完整聚合结果。
+          // 不能因为 gotText=true 就丢弃 final，否则前端只能看到拆解标题。
+          if (text && (isOrchestratorFinal || !gotText)) {
             assistant.pending = false
             assistant.content = text
             gotText = true
@@ -803,6 +807,7 @@ export default {
         id: null,
         role: 'assistant',
         content: '',
+        imageUrl: '',
         productCards: [],
         confirmCard: null,
         cartSelection: null,
@@ -825,6 +830,8 @@ export default {
         conversationId: m.conversationId,
         role: m.role,
         content: m.content || '',
+        // 后端 Java 实体通常返回 imageUrl，兼容历史/代理返回的 image_url。
+        imageUrl: m.imageUrl || m.image_url || '',
         productCards: m.productCards || [],
         confirmCard: m.confirmCard || null,
         cartSelection: m.cartSelection || null,

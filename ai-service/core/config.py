@@ -50,6 +50,10 @@ class Config:
         "DASH_SCOPE_MULTI_MODAL_EMBEDDING_MODEL", "qwen3-vl-embedding",
     )
     DASH_SCOPE_MULTI_MODAL_RERANK_MODEL = os.getenv("DASH_SCOPE_MULTI_MODAL_RERANK_MODEL", "qwen3-vl-rerank")
+    # 商品检索二次相关性审核；模型不支持图片时自动降级到品类一致性过滤。
+    SHOPPING_LLM_JUDGE_ENABLED = os.getenv("SHOPPING_LLM_JUDGE_ENABLED", "true").lower() in ("1", "true", "yes")
+    SHOPPING_LLM_JUDGE_MAX_CANDIDATES = int(os.getenv("SHOPPING_LLM_JUDGE_MAX_CANDIDATES", "10"))
+    SHOPPING_LLM_JUDGE_MIN_SCORE = float(os.getenv("SHOPPING_LLM_JUDGE_MIN_SCORE", "0.55"))
     # 多模态 embedding / rerank 走百炼业务空间专属端点；不配置时使用 dashscope SDK 默认端点。
     DASHSCOPE_MAAS_BASE_URL = os.getenv("DASHSCOPE_MAAS_BASE_URL", "")
 

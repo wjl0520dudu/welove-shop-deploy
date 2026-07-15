@@ -69,12 +69,23 @@ async def _multimodal_shopping(
     调多模态工具没意义；直接程序侧调多模态检索，把结果交给 LLM 生成话术。
     """
     from shopping.multimodal_search import search_multimodal_v1
+    from shopping.relevance_judge import filter_candidates
 
     try:
+        # 多召回一批候选，再允许 judge 过滤掉异类；最终仍只返回 top_k，
+        # 不为了凑满 top_k 把明显不相关的商品补回来。
+        retrieval_top_k = max(int(top_k or 5) * 2, int(top_k or 5))
         results = await search_multimodal_v1(
             query_text=query_text or "",
             query_image_url=image_url,
-            top_k=top_k,
+            top_k=retrieval_top_k,
+        )
+        results = await filter_candidates(
+            llm=llm,
+            query_text=query_text or "",
+            query_image_url=image_url,
+            candidates=results,
+            limit=top_k,
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("multimodal shopping retrieval failed")

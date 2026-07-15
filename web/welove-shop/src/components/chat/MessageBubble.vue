@@ -14,15 +14,15 @@
             v-if="displayImageUrl"
             class="msg-image"
             :src="displayImageUrl"
-            mode="widthFix"
+            mode="aspectFit"
             @tap="previewImage"
           />
           <text
-            v-if="message.content"
+            v-if="displayContent"
             class="text"
             :user-select="true"
             :selectable="true"
-          >{{ message.content }}</text><text v-if="message.streaming" class="cursor">▍</text>
+          >{{ displayContent }}</text><text v-if="message.streaming" class="cursor">▍</text>
         </template>
       </view>
       <view v-if="message.errored" class="errored">
@@ -68,6 +68,12 @@ export default {
     displayImageUrl() {
       if (!this.isUser) return ''
       return this.message.imageUrl || this.message.image_url || ''
+    },
+    // 纯图片消息落库时后端会写入 [图片] 占位符，图片已显示时不再重复渲染。
+    displayContent() {
+      const content = this.message.content || ''
+      if (this.displayImageUrl && /^\[(图片|图像)\]$/.test(content.trim())) return ''
+      return content
     },
     feedbackLabel() {
       if (this.message.feedbackType === 'like') return '已赞'
@@ -145,7 +151,9 @@ export default {
 /* 用户消息里的图片:占满气泡宽度、圆角、最大高度限制避免长图撑爆屏幕 */
 .msg-image {
   display: block;
-  width: 100%;
+  width: 320rpx;
+  height: 320rpx;
+  max-width: 62vw;
   max-height: 480rpx;
   border-radius: 14rpx;
   margin-bottom: 12rpx;

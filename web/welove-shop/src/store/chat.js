@@ -12,6 +12,8 @@ function hydrateServerMessage(m) {
     conversationId: m.conversationId,
     role: m.role,
     content: m.content || '',
+    // 保留用户多模态消息的图片地址，切换会话/刷新后 MessageBubble 才能回显。
+    imageUrl: m.imageUrl || m.image_url || '',
     productCards: m.productCards || [],
     confirmCard: m.confirmCard || null,
     cartSelection: m.cartSelection || null,

@@ -229,8 +229,15 @@ public class ChatServiceImpl implements ChatService {
                             break;
                         case "final":
                             // ai-service 的 final data 即完整 AIResponse，字段在顶层(非嵌套 response)
-                            if (answerBuilder.length() == 0 && event.containsKey("answer")) {
-                                answerBuilder.append(event.get("answer"));
+                            Object finalAnswer = event.get("answer");
+                            String finalTaskType = String.valueOf(event.getOrDefault("task_type", ""));
+                            if ("orchestrator".equals(finalTaskType)
+                                    && finalAnswer != null && !String.valueOf(finalAnswer).isBlank()) {
+                                // 编排模式的 token 主要是子任务流；最终聚合答案必须作为持久化权威结果。
+                                answerBuilder.setLength(0);
+                                answerBuilder.append(finalAnswer);
+                            } else if (answerBuilder.length() == 0 && finalAnswer != null) {
+                                answerBuilder.append(finalAnswer);
                             }
                             if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                             if (event.get("product_cards") instanceof java.util.List<?> pc) {
@@ -441,8 +448,15 @@ public class ChatServiceImpl implements ChatService {
                             if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                             break;
                         case "final":
-                            if (answerBuilder.length() == 0 && event.containsKey("answer")) {
-                                answerBuilder.append(event.get("answer"));
+                            Object finalAnswer = event.get("answer");
+                            String finalTaskType = String.valueOf(event.getOrDefault("task_type", ""));
+                            if ("orchestrator".equals(finalTaskType)
+                                    && finalAnswer != null && !String.valueOf(finalAnswer).isBlank()) {
+                                // 图文场景也可能进入编排链路，最终聚合答案不能被子任务 token 覆盖。
+                                answerBuilder.setLength(0);
+                                answerBuilder.append(finalAnswer);
+                            } else if (answerBuilder.length() == 0 && finalAnswer != null) {
+                                answerBuilder.append(finalAnswer);
                             }
                             if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                             if (event.get("product_cards") instanceof java.util.List<?> pc) {
