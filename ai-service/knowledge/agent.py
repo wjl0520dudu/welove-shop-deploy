@@ -253,19 +253,7 @@ _ENTITY_STOPWORD_SPLITTER = re.compile("|".join(sorted(_ENTITY_STOPWORDS, key=le
 
 
 def _extract_entities_from_query(query: str, max_entities: int = 5) -> List[str]:
-    """从用户问题里抽取候选知识实体。
-
-    策略：
-    1. 优先按分隔符（和/与/或/、）切分成 segments —— 覆盖并列结构
-       如"烟酰胺和视黄醇能一起用吗" → segments = ["烟酰胺", "视黄醇能一起用吗"]
-    2. 每个 segment 内部再按停用词二次切分 —— 中文连续块没空格，正则匹的是整块，
-       如"视黄醇能一起用吗"必须切成 ["视黄醇", "能", "一起", "用吗"] 才能过滤掉后半段
-    3. 取切分结果里第一个"看起来像实体"的 token（不在停用词表 + 长度 ≥ 2 + 非纯数字）
-    4. 保序去重 + 截断
-
-    这是"零成本"方案：纯正则，不调 LLM。够 90% case 用，覆盖不到的
-    case（如复杂长句）由后续检索 sources 抽取兜底。
-    """
+    """从用户问题里抽取候选知识实体。此处保留正则版本作为兜底，LLM 版本见 _extract_entities_with_llm。"""
     if not query:
         return []
 
@@ -280,9 +268,55 @@ def _extract_entities_from_query(query: str, max_entities: int = 5) -> List[str]
         if entity:
             entities.append(entity)
 
-    # 保序去重
     entities = list(dict.fromkeys(entities))[:max_entities]
     return entities
+
+
+class EntityExtractionResult(BaseModel):
+    """LLM 实体抽取的结构化输出。"""
+    entities: List[str] = Field(default_factory=list, description="从用户问题中提取的实体列表，如成分名、产品名、功效名。纯指代/反问/无实体时返回空列表。")
+
+
+_ENTITY_EXTRACT_PROMPT = """从用户的知识问答问题中提取关键实体（成分名、产品名、原料名、功效名等）。
+
+规则：
+1. 只提取本轮问题中明确提到的实体，不要从上下文推断
+2. 如果问题只是指代（"第二个""它的副作用"等），不要提取——因为这些指代会在指代消解环节处理
+3. 保序去重，最多 5 个
+4. 没有实体时返回空列表
+5. 示例：
+   - "烟酰胺和视黄醇能一起用吗" → ["烟酰胺", "视黄醇"]
+   - "第二个的成分是什么" → []（指代，不提取）
+   - "透明质酸的功效原理" → ["透明质酸"]
+   - "熊果苷和VC哪个美白效果好" → ["熊果苷", "VC"]
+   - "你好" → []"""
+
+
+async def _extract_entities_with_llm(query: str, max_entities: int = 5) -> Optional[List[str]]:
+    """用 LLM 抽取实体。失败返回 None 触发正则兜底。"""
+    from core.llm import get_llm
+    llm = get_llm()
+    if llm is None:
+        return None
+
+    try:
+        structured = llm.with_structured_output(EntityExtractionResult, method="function_calling")
+        result = await structured.ainvoke(
+            [
+                {"role": "system", "content": _ENTITY_EXTRACT_PROMPT},
+                {"role": "user", "content": query},
+            ],
+            config={"tags": ["ai_internal"]},
+        )
+    except Exception:
+        logger.warning("LLM entity extraction failed, fallback to regex", exc_info=True)
+        return None
+
+    if not isinstance(result, EntityExtractionResult):
+        return None
+
+    entities = list(dict.fromkeys(result.entities))[:max_entities]
+    return entities if entities else None
 
 
 def _pick_entity_from_segment(seg: str) -> Optional[str]:
@@ -636,7 +670,10 @@ class KnowledgeAgent:
         写入失败不阻塞主流程 —— 记忆缺失最多是下一轮 resolve_reference 失效。
         """
         try:
-            entities = _extract_entities_from_query(question)
+            # LLM 优先，正则兜底
+            entities = await _extract_entities_with_llm(question)
+            if entities is None:
+                entities = _extract_entities_from_query(question)
             if not entities:
                 entities = _extract_entities_from_sources(sources)
             if entities:

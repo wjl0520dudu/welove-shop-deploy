@@ -53,10 +53,13 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolRuntime
+from pydantic import BaseModel, Field
 
 from agents.memory import get_business_memory
+from core.llm import get_llm
 
 logger = logging.getLogger("ai-service.reference_tools")
 
@@ -472,6 +475,140 @@ def _resolve_plural(
 # ---- 工具本体 ----------------------------------------------------------------
 
 
+class ReferenceResult(BaseModel):
+    """指代消解的结构化输出（LLM 用 with_structured_output 产出）。"""
+    has_reference: bool = Field(..., description="是否检测到指代")
+    resolved_query: str = Field(default="", description="解析后的 query，指代已被替换为实体名/商品名")
+    matched_product_id: Optional[int] = Field(default=None, description="商品域命中的 product_id（单数）")
+    matched_product_ids: List[int] = Field(default_factory=list, description="商品域命中的 product_id 列表（复数/集合）")
+    matched_entity: Optional[str] = Field(default=None, description="实体域命中的实体名（单数）")
+    matched_entities: List[str] = Field(default_factory=list, description="实体域命中的实体名列表（复数）")
+    reference_type: Optional[str] = Field(default=None, description="指代类型：ordinal | plural | pronominal | comparative | implicit | entity_ordinal | entity_plural | entity_implicit")
+    hint: str = Field(default="", description="给 LLM 的提示（含后续动作建议）")
+
+
+_REFERENCE_RESOLVER_PROMPT = """你是指代消解器。根据对话上下文，判断用户当前问题是否包含指代表达，并解析为具体商品或知识实体。
+
+## 支持的指代类型
+
+| 类型 | 示例 | 说明 |
+|------|------|------|
+| ordinal | "第二个"、"第三款"、"最后一个" | 序号指代，按上轮商品列表顺序 |
+| pronominal | "刚才那个"、"这个"、"它" | 代词指代，优先匹配当前关注商品 |
+| comparative | "更便宜的"、"评分高的那个" | 比较指代，按价格/评分等字段排序 |
+| implicit | "多少钱"、"还有别的颜色吗" | 隐式指代，指向当前关注商品 |
+| plural | "他们三"、"这几款"、"它们" | 复数指代，指向多款商品 |
+| entity_ordinal | "第二个成分" | 实体序号指代，看上轮知识实体列表 |
+| entity_plural | "它们能一起用吗" | 实体复数指代 |
+| entity_implicit | "副作用"、"成分"、"怎么用" | 实体隐式指代，追问上轮实体 |
+
+## 规则
+1. **必须有上下文才能判定指代**：如果上下文里没有商品也没有实体，has_reference 必须为 false，不能自己编造
+2. 商品域优先于实体域：同时有商品和实体上下文时，优先返回商品域结果
+3. matched_product_id 填商品列表中的 product_id 数值
+4. matched_entity 必须填实体列表中实际出现的实体名（如"视黄醇"），不能编造，不能填 null
+5. entity_ordinal 类型：看"第X个"来定位实体列表，例如"第二个"在实体列表["烟酰胺","视黄醇","透明质酸"]中对应第2个→ matched_entity="视黄醇"
+6. resolved_query 把指代替换为具体的名称
+7. entity_implicit 类型：追问"副作用/成分/怎么用"且没有明确主语时，指向实体列表的第1个（如实体列表["烟酰胺","视黄醇","透明质酸"]，问"副作用" → matched_entity="烟酰胺"）"""
+
+
+def _format_reference_context(memory: Dict[str, Any]) -> str:
+    """把 business_memory 格式化成 LLM 可读的上下文。"""
+    parts: List[str] = []
+
+    cards = memory.get("last_product_cards") or []
+    if cards:
+        lines = [f"  第{i}个：{c.get('title')}（¥{c.get('price')}）product_id={c.get('product_id')}"
+                 for i, c in enumerate(cards[:5], 1)]
+        if len(cards) > 5:
+            lines.append(f"  … 另有 {len(cards) - 5} 个未列出")
+        parts.append("[上轮推荐商品]\n" + "\n".join(lines))
+
+    focused = memory.get("last_focused_product")
+    if focused:
+        parts.append(f"[当前关注商品] {focused.get('title')}（product_id={focused.get('product_id')}）")
+
+    entities = memory.get("last_knowledge_entities") or []
+    if entities:
+        lines = [f"  第{i}个：{e}" for i, e in enumerate(entities[:5], 1)]
+        parts.append("[上轮谈到的知识实体]\n" + "\n".join(lines))
+
+    return "\n\n".join(parts) if parts else "（暂无上下文）"
+
+
+async def _resolve_reference_with_llm(query: str, memory: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """用 LLM 解析指代。失败返回 None 触发正则兜底。"""
+    try:
+        llm = get_llm()
+        if llm is None:
+            return None
+    except Exception:
+        logger.warning("LLM not available for resolve_reference", exc_info=True)
+        return None
+
+    context = _format_reference_context(memory)
+    cards = memory.get("last_product_cards") or []
+
+    try:
+        structured = llm.with_structured_output(ReferenceResult, method="function_calling")
+        result = await structured.ainvoke(
+            [
+                SystemMessage(content=_REFERENCE_RESOLVER_PROMPT),
+                SystemMessage(content=f"## 对话上下文\n\n{context}"),
+                HumanMessage(content=query),
+            ],
+            config={"tags": ["ai_internal"]},
+        )
+    except Exception:
+        logger.warning("LLM resolve_reference failed", exc_info=True)
+        return None
+
+    if not isinstance(result, ReferenceResult) or not result.has_reference:
+        return None
+
+    # 从 product_id 反查 product card
+    matched_product = None
+    matched_products = []
+    target_ids = []
+    if result.matched_product_id is not None:
+        target_ids.append(result.matched_product_id)
+    if result.matched_product_ids:
+        target_ids.extend(result.matched_product_ids)
+
+    if target_ids and cards:
+        for pid in set(target_ids):
+            for c in cards:
+                if c.get("product_id") == pid:
+                    cpy = dict(c)
+                    if cpy not in matched_products:
+                        matched_products.append(cpy)
+                    if matched_product is None:
+                        matched_product = cpy
+                    break
+
+    matched_entity = result.matched_entity
+    matched_entities = result.matched_entities or []
+    if matched_entity and matched_entity not in matched_entities:
+        matched_entities.insert(0, matched_entity)
+
+    hint = result.hint or ""
+    if not hint and matched_product:
+        hint = f"已将指代解析为「{matched_product.get('title')}」，请基于此商品回答。"
+    elif not hint and matched_entity:
+        hint = f"已将指代解析为「{matched_entity}」，请基于此实体检索/回答。"
+
+    return {
+        "has_reference": True,
+        "resolved_query": result.resolved_query or query,
+        "matched_product": matched_product,
+        "matched_products": matched_products,
+        "matched_entity": matched_entity,
+        "matched_entities": matched_entities,
+        "reference_type": result.reference_type,
+        "hint": hint,
+    }
+
+
 @tool(parse_docstring=True)
 async def resolve_reference(query: str, runtime: ToolRuntime) -> Dict[str, Any]:
     """解析用户问题中的商品/知识实体指代表达。
@@ -522,16 +659,20 @@ async def resolve_reference(query: str, runtime: ToolRuntime) -> Dict[str, Any]:
         logger.warning("resolve_reference: Store 读取失败", exc_info=True)
         return _no_reference_result(query, hint="无法读取业务记忆，无法解析指代。请直接按原始 query 处理。")
 
+    # ── LLM 优先 ──
+    llm_result = await _resolve_reference_with_llm(query, memory)
+    if llm_result is not None:
+        return llm_result
+
+    # ── LLM 失败 → 正则兜底 ──
     last_cards: List[Dict[str, Any]] = memory.get("last_product_cards") or []
     focused: Optional[Dict[str, Any]] = memory.get("last_focused_product")
     entities: List[str] = memory.get("last_knowledge_entities") or []
 
-    # ── 商品域：按优先级尝试各类型解析（序号 > 复数 > 代词 > 比较 > 隐式）──
     product_result = _try_product_resolvers(query, last_cards, focused)
     if product_result is not None:
         return _pad_result(product_result)
 
-    # ── 实体域：商品域没命中才尝试（序号 > 复数 > 隐式）──
     entity_result = _try_entity_resolvers(query, entities)
     if entity_result is not None:
         return _pad_result(entity_result)
