@@ -142,6 +142,14 @@ class TestNormalizeAIResponse:
         assert resp.llm_route is None
         assert resp.route_fallback_used is False
 
+    def test_preference_suggested_questions_preserved(self):
+        resp = normalize_ai_response({
+            "answer": "为你推荐",
+            "task_type": "shopping",
+            "suggested_questions": ["有哪些更符合我清爽偏好的防晒？"],
+        })
+        assert resp.suggested_questions == ["有哪些更符合我清爽偏好的防晒？"]
+
 
 # ---------------- 错误响应 ----------------
 

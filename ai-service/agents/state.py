@@ -18,6 +18,9 @@ class AssistantState(TypedDict):
     conversation_id: NotRequired[str]
     user_id: NotRequired[int | str]
     jwt_token: NotRequired[str]
+    gender: NotRequired[str]
+    skin_type: NotRequired[str]
+    preference_tags: NotRequired[list[str] | None]
     # 多模态输入：单张图片 URL（可以是 OSS 绝对 URL，也可以是相对路径，
     # 后端调用 DashScope 前会走 _normalize_image_url 拼上 IMAGE_BASE_URL）。
     # simple 请求有图时 shopping_node 走多模态链路；complex 请求必须由
@@ -45,6 +48,7 @@ class AssistantState(TypedDict):
     product_cards: NotRequired[list[dict[str, Any]]]
     sources: NotRequired[list[dict[str, Any]]]
     tool_calls: NotRequired[list[dict[str, Any]]]
+    suggested_questions: NotRequired[list[str]]
 
     # ── 编排元数据 ──
     run_id: NotRequired[str]

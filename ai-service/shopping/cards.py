@@ -50,6 +50,9 @@ def build_product_cards(
                 "_matched_needs": p.matched_needs,
                 "_risk_notes": p.risk_notes,
                 "_recall_sources": p.recall_sources,
+                "_personalization_score": round(p.personalization_score, 3),
+                "_matched_preferences": p.matched_preferences,
+                "_preference_conflicts": p.preference_conflicts,
             }
         )
     return cards

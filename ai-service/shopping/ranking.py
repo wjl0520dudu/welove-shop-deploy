@@ -16,6 +16,7 @@ score =
 + avoid_score      * 0.15   avoid 关键词命中 → 扣分
 + popularity_score * 0.10   sales/rating 归一化
 + recall_score     * 0.10   多路召回 boost（在多路都出现的项加分）
++ personalization_adjustment  长期偏好命中小幅加分、长期避雷项命中扣分
 ```
 """
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from core.config import config
 from shopping.schemas import RankedProduct, ShoppingNeed
 
 
@@ -48,6 +50,15 @@ _SYNONYMS: Dict[str, List[str]] = {
     "干皮": ["干皮", "滋润", "保湿", "水润"],
     "便携": ["便携", "小巧", "旅行装", "迷你"],
     "平价": ["平价", "性价比", "亲民", "实惠"],
+    "高性价比": ["高性价比", "性价比", "平价", "实惠", "亲民"],
+    "品质优先": ["品质", "高品质", "精选", "旗舰", "高端"],
+    "新品尝鲜": ["新品", "新款", "首发", "尝鲜"],
+    "大牌之选": ["大牌", "知名品牌", "品牌"],
+    "小众独特": ["小众", "独特", "设计感", "限定"],
+    "油性": ["油性", "油皮", "控油", "清爽", "哑光"],
+    "干性": ["干性", "干皮", "滋润", "保湿", "水润"],
+    "混合肌": ["混合肌", "混油", "混干", "分区护理"],
+    "中性肌": ["中性肌", "中性", "温和"],
 }
 
 
@@ -86,6 +97,8 @@ class ProductRanker:
 
         pref_terms = _expand_synonyms(need.preferences + need.must_have + need.nice_to_have)
         avoid_terms = _expand_synonyms(need.avoid)
+        profile_pref_terms = _expand_synonyms(need.personalization_preferences)
+        profile_avoid_terms = _expand_synonyms(need.personalization_avoid)
 
         # 归一化用的极值
         max_sales = max((int(c.get("sales_count") or 0) for c in candidates), default=1) or 1
@@ -100,6 +113,12 @@ class ProductRanker:
             pref_s, matched, unmatched = _score_preferences(text, pref_terms, need.preferences)
             budget_s, over_budget = _score_budget(_price(c), need.budget_min, need.budget_max)
             avoid_s, avoid_hits = _score_avoid(text, avoid_terms)
+            profile_pref_s, profile_matched, _ = _score_preferences(
+                text, profile_pref_terms, need.personalization_preferences,
+            )
+            _, profile_avoid_hits, _ = _score_preferences(
+                text, profile_avoid_terms, need.personalization_avoid,
+            )
             pop_s = _score_popularity(c, max_sales)
             recall_s = len(c.get("recall_sources") or []) / max_recall_sources
 
@@ -112,6 +131,29 @@ class ProductRanker:
                 + pop_s * _WEIGHTS["popularity"]
                 + recall_s * _WEIGHTS["recall"]
             )
+            personalization_adjustment = 0.0
+            if need.personalization_preferences:
+                personalization_adjustment += profile_pref_s * config.PERSONALIZATION_POSITIVE_BOOST
+            if need.personalization_avoid:
+                personalization_adjustment -= (
+                    len(profile_avoid_hits) / max(len(need.personalization_avoid), 1)
+                ) * config.PERSONALIZATION_NEGATIVE_PENALTY
+            profile_budget_s, profile_over_budget = _score_budget(
+                _price(c),
+                need.personalization_budget_min,
+                need.personalization_budget_max,
+            )
+            if (
+                need.personalization_budget_min is not None
+                or need.personalization_budget_max is not None
+            ):
+                if profile_over_budget:
+                    personalization_adjustment -= 0.08
+                elif profile_budget_s >= 1.0:
+                    personalization_adjustment += 0.05
+                elif profile_budget_s < 0.5:
+                    personalization_adjustment -= 0.03
+            score += personalization_adjustment
 
             # ── 匹配理由 / 风险提示 ──
             reasons = _build_reasons(need, matched, over_budget=False, budget_max=need.budget_max)
@@ -120,6 +162,15 @@ class ProductRanker:
                 risks.append(f"价格超出预算 {need.budget_max}")
             if avoid_hits:
                 risks.append(f"含避雷词：{', '.join(avoid_hits[:3])}")
+            if profile_matched:
+                reasons.append(f"符合长期偏好：{', '.join(profile_matched[:3])}")
+            if profile_avoid_hits:
+                risks.append(f"与长期避雷项冲突：{', '.join(profile_avoid_hits[:3])}")
+            if need.personalization_budget_max is not None:
+                if profile_over_budget:
+                    risks.append(f"高于长期预算偏好 {need.personalization_budget_max:g} 元")
+                elif profile_budget_s > 0:
+                    reasons.append(f"符合长期预算偏好 {need.personalization_budget_max:g} 元以内")
 
             ranked.append(
                 RankedProduct(
@@ -142,6 +193,9 @@ class ProductRanker:
                     unmatched_needs=unmatched,
                     rank_reason=reasons,
                     risk_notes=risks,
+                    personalization_score=round(personalization_adjustment, 4),
+                    matched_preferences=profile_matched,
+                    preference_conflicts=profile_avoid_hits,
                 )
             )
 

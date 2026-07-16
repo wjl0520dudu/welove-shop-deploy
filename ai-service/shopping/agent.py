@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agents.memory import get_business_memory
+from agents.preferences import build_preference_questions
 from agents.prompts import SHOPPING_AGENT_PROMPT
 from agents.state import ShoppingAgentState
 from agents.middleware import build_summarization_middleware
@@ -220,12 +221,21 @@ class ShoppingAgent:
                     answer = content
                     break
 
+        try:
+            latest_memory = await get_business_memory(conversation_id, user_id)
+        except Exception:  # noqa: BLE001
+            latest_memory = effective_memory
+        suggested_questions = build_preference_questions(
+            latest_memory.get("user_preferences") or {}
+        )
+
         return {
             "answer": answer or "暂时没能找到合适的商品，能再说详细一点吗？",
             "product_cards": product_cards,
             "task_type": "shopping",
             "sources": [],
             "tool_calls": collected_tool_calls,
+            "suggested_questions": suggested_questions,
             "error": False,
         }
 

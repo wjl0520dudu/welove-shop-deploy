@@ -662,6 +662,23 @@ LLM 负责：
 
 ## Phase 3：用户偏好参与个性化推荐
 
+### 当前实现状态（2026-07-16）
+
+已完成主链路实现：
+
+- 新增动态偏好事实，记录 polarity、source、confidence、updated_at、expires_at 和 category scope；
+- 保持旧版 `skin_type`、`gender`、`preference_tags` 和预算字段兼容；
+- chat-service 已携带的注册画像在 AI 请求入口同步到用户级 Store；
+- 复用 ShoppingNeed 解析结果学习偏好，不增加额外 LLM 抽取调用；
+- 本轮明确条件优先，长期偏好只参与有界软重排；
+- 文本推荐在现有 ProductRanker 中加入长期偏好加分和避雷项扣分；
+- 图片/图文推荐在相关性过滤后，基于数据库结构化文本字段进行偏好软重排；
+- 商品卡新增偏好匹配、冲突和个性化分数观测字段；
+- AIResponse 新增 `suggested_questions`，H5 在下一次新会话中优先展示偏好推荐问题；
+- 新增 Preference Compliance@K、NDCG@K 及个性化前后 Delta 离线评测入口。
+
+测试与评测方式见 `docs/plan/phase3-personalization-test-guide.md`。
+
 ### 偏好数据结构
 
 偏好不应被限制为固定字段，可使用动态事实结构：

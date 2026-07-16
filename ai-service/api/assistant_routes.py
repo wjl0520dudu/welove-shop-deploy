@@ -67,6 +67,9 @@ async def run_assistant(request: AssistantRunRequest, http_request: Request) -> 
             conversation_id=request.conversation_id,
             user_id=_parse_user_id(request.user_id),
             jwt_token=request.jwt_token,
+            gender=request.gender,
+            skin_type=request.skin_type,
+            preference_tags=request.preference_tags,
             trace_id=trace_id,
         )
     except Exception:
@@ -129,6 +132,9 @@ async def stream_assistant(request: AssistantRunRequest, http_request: Request):
                 conversation_id=request.conversation_id,
                 user_id=_parse_user_id(request.user_id),
                 jwt_token=request.jwt_token,
+                gender=request.gender,
+                skin_type=request.skin_type,
+                preference_tags=request.preference_tags,
                 trace_id=trace_id,
             ):
                 # 客户端断开后提前停 LLM,避免空跑 token
@@ -301,6 +307,9 @@ async def run_multimodal_assistant(
             conversation_id=request.conversation_id,
             user_id=_parse_user_id(request.user_id),
             jwt_token=request.jwt_token,
+            gender=request.gender,
+            skin_type=request.skin_type,
+            preference_tags=request.preference_tags,
             trace_id=trace_id,
             image_url=image_url,
         )
@@ -368,6 +377,9 @@ async def stream_multimodal_assistant(
                 conversation_id=request.conversation_id,
                 user_id=_parse_user_id(request.user_id),
                 jwt_token=request.jwt_token,
+                gender=request.gender,
+                skin_type=request.skin_type,
+                preference_tags=request.preference_tags,
                 trace_id=trace_id,
                 image_url=image_url,
             ):

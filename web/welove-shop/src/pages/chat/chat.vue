@@ -172,6 +172,7 @@ export default {
       skuList: [],
       pendingCartProductId: null,
       recommended: [],
+      learnedRecommended: [],
       scrollIntoId: '',
       /** 记录当前正在 SSE 流的会话 ID，用于切换窗口后其他会话收到消息时标红点 */
       _streamingConvId: null,
@@ -450,6 +451,11 @@ export default {
         onFinalText: (text, finalPayload = {}) => {
           const finalTaskType = finalPayload.task_type || finalPayload.taskType || assistant.taskType
           const isOrchestratorFinal = finalTaskType === 'orchestrator'
+          const suggested = finalPayload.suggested_questions || finalPayload.suggestedQuestions || []
+          if (Array.isArray(suggested) && suggested.length) {
+            this.learnedRecommended = suggested.filter(Boolean)
+            this.buildRecommended()
+          }
           // Orchestrator 会先流出子任务标题/子答案，final.answer 才是完整聚合结果。
           // 不能因为 gotText=true 就丢弃 final，否则前端只能看到拆解标题。
           if (text && (isOrchestratorFinal || !gotText)) {
@@ -771,7 +777,10 @@ export default {
       if (id) chatStore.setConversationMessages(id, this.messages)
     },
     buildRecommended() {
-      this.recommended = buildRecommendedQuestions(userStore.state.user || {}, { limit: 4 })
+      this.recommended = buildRecommendedQuestions(userStore.state.user || {}, {
+        limit: 4,
+        learnedQuestions: this.learnedRecommended
+      })
     },
     buildPayload(conversationId, content, retry = false, imageUrl = '') {
       const u = userStore.state.user || {}

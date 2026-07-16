@@ -127,6 +127,7 @@ def normalize_ai_response(
         has_sources=bool(result.get("has_sources", bool(sources))),
         steps=_normalize_steps(result.get("steps") or result.get("_steps")),
         tool_calls=_normalize_tool_calls(result.get("tool_calls")),
+        suggested_questions=result.get("suggested_questions") or [],
         intermediate_conclusions=result.get("intermediate_conclusions") or [],
         route=result.get("route"),
         route_reason=result.get("route_reason"),

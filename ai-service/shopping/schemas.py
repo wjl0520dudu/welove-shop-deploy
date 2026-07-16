@@ -72,6 +72,13 @@ class ShoppingNeed(BaseModel):
     must_have: List[str] = Field(default_factory=list)
     nice_to_have: List[str] = Field(default_factory=list)
 
+    # 长期画像只参与软重排；与本轮明确 preferences/avoid 分开，保证当前请求优先。
+    personalization_preferences: List[str] = Field(default_factory=list)
+    personalization_avoid: List[str] = Field(default_factory=list)
+    personalization_budget_min: Optional[float] = None
+    personalization_budget_max: Optional[float] = None
+    applied_preference_facts: List[Dict[str, Any]] = Field(default_factory=list)
+
     sort_preference: Literal[
         "match", "price_low", "price_high", "rating", "sales", "value"
     ] = "match"
@@ -137,6 +144,9 @@ class RankedProduct(BaseModel):
     unmatched_needs: List[str] = Field(default_factory=list)
     rank_reason: List[str] = Field(default_factory=list)      # 可读的匹配理由，喂给 LLM 抄
     risk_notes: List[str] = Field(default_factory=list)       # 潜在提醒（超预算/避雷词命中等）
+    personalization_score: float = 0.0
+    matched_preferences: List[str] = Field(default_factory=list)
+    preference_conflicts: List[str] = Field(default_factory=list)
 
 
 # ---- 三个高层 Tool 的返回契约 -------------------------------------------

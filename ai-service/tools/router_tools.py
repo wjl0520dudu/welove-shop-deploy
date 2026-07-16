@@ -188,6 +188,19 @@ def format_business_memory_for_router(memory: Optional[Dict[str, Any]]) -> str:
         simplified = {k: v for k, v in prefs.items() if k in keep_keys and v}
         if simplified:
             parts.append("[用户偏好] " + json.dumps(simplified, ensure_ascii=False))
+        facts = prefs.get("preference_facts") or []
+        slim_facts = [
+            {
+                "aspect": fact.get("aspect"),
+                "value": fact.get("value"),
+                "polarity": fact.get("polarity", "like"),
+                "scope": fact.get("scope") or {},
+            }
+            for fact in facts[:5]
+            if isinstance(fact, dict) and fact.get("value") not in (None, "")
+        ]
+        if slim_facts:
+            parts.append("[动态偏好事实] " + json.dumps(slim_facts, ensure_ascii=False))
 
     if not parts:
         return ""

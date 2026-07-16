@@ -162,6 +162,22 @@ class TestFormatBusinessMemoryForRouter:
         # 但 last_product_cards 应该还在
         assert "上轮推荐商品" in text
 
+    def test_dynamic_preference_facts_rendered(self):
+        memory = {
+            "user_preferences": {
+                "preference_facts": [{
+                    "aspect": "preference",
+                    "value": "清爽",
+                    "polarity": "like",
+                    "scope": {"category": "防晒"},
+                }]
+            }
+        }
+        text = format_business_memory_for_router(memory)
+        assert "动态偏好事实" in text
+        assert "清爽" in text
+        assert "防晒" in text
+
     def test_result_starts_with_header(self):
         memory = {"last_product_cards": [{"product_id": 1, "title": "A", "price": 100}]}
         text = format_business_memory_for_router(memory)

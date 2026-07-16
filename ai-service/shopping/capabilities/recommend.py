@@ -36,11 +36,13 @@ from agents.memory import (
     clear_pending_shopping_need,
     get_pending_shopping_need,
     remember_pending_shopping_need,
+    remember_preference_facts,
     remember_product_cards,
 )
 from core.llm import get_llm
 from shopping.cards import build_product_cards
 from shopping.ranking import ProductRanker
+from shopping.personalization import apply_user_preferences, facts_from_shopping_need
 from shopping.retrieval import ShoppingRetriever, build_retrieval_plan
 from shopping.schemas import (
     PendingShoppingNeed,
@@ -265,6 +267,27 @@ class RecommendCapability:
         else:
             need = current_need
         trace.append({"step": "merge_pending_need", "output": need.model_dump()})
+
+        # ── 2b. 长期偏好只补空字段并参与软重排；本轮明确条件始终优先 ──
+        need, personalization_trace = apply_user_preferences(
+            need, context.user_preferences,
+        )
+        trace.append({"step": "apply_user_preferences", "output": personalization_trace})
+
+        # 复用本次 ShoppingNeed 解析结果学习偏好，不增加额外 LLM 调用。
+        learned_facts = facts_from_shopping_need(
+            current_need,
+            query=query,
+            category=need.category,
+        )
+        if learned_facts:
+            await remember_preference_facts(
+                context.conversation_id, context.user_id, learned_facts,
+            )
+            trace.append({"step": "learn_preference_facts", "output": {
+                "fact_count": len(learned_facts),
+                "aspects": [fact.get("aspect") for fact in learned_facts],
+            }})
 
         # ── 3. clarify_gate ──
         missing = get_missing_required_slots(need)

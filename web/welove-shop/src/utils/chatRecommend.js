@@ -51,12 +51,17 @@ function normalizeTags(tags) {
  * @param {object} [opts]
  * @param {number} [opts.limit=4]
  * @param {Date}   [opts.date]
+ * @param {string[]} [opts.learnedQuestions] AI 侧根据跨会话偏好生成的问题
  * @returns {string[]} 去重后的推荐问题
  */
-export function buildRecommendedQuestions(user = {}, { limit = 4, date = new Date() } = {}) {
+export function buildRecommendedQuestions(
+  user = {},
+  { limit = 4, date = new Date(), learnedQuestions = [] } = {}
+) {
   const pool = []
   const season = currentSeason(date)
 
+  normalizeTags(learnedQuestions).forEach((q) => pool.push(q))
   if (SEASON_QUESTIONS[season]) pool.push(SEASON_QUESTIONS[season][0])
   if (user.skinType && SKIN_QUESTIONS[user.skinType]) pool.push(SKIN_QUESTIONS[user.skinType])
 

@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from agents.memory import get_business_memory, remember_product_cards
+from agents.memory import get_business_memory, remember_product_cards, remember_user_preferences
 from agents.schemas import IntentDecision, OrchestratorDecision
 from agents.prompts import ORCHESTRATOR_PROMPT, ROUTER_PROMPT
 from agents.state import AssistantState
@@ -505,6 +505,7 @@ class AssistantGraph:
             "product_cards": result.get("product_cards", []),
             "sources": result.get("sources", []),
             "tool_calls": result.get("tool_calls", []),
+            "suggested_questions": result.get("suggested_questions", []),
             "duration_ms": int((time.perf_counter() - started) * 1000),
             "error": has_error,
             "error_code": result.get("error_code"),
@@ -586,6 +587,12 @@ class AssistantGraph:
             for result in sub_results
             for call in (result.get("tool_calls") or [])
         ]
+        suggested_questions = list(dict.fromkeys(
+            question
+            for result in sub_results
+            for question in (result.get("suggested_questions") or [])
+            if question
+        ))[:4]
         has_error = any(bool(r.get("error")) for r in sub_results)
         return {
             "answer": answer,
@@ -593,6 +600,7 @@ class AssistantGraph:
             "product_cards": product_cards,
             "sources": sources,
             "tool_calls": tool_calls,
+            "suggested_questions": suggested_questions,
             "route": "orchestrator",
             "route_reason": state.get("orchestrator_reason"),
             "error": has_error,
@@ -797,6 +805,9 @@ class AssistantGraph:
             "conversation_id": kwargs.get("conversation_id"),
             "user_id": kwargs.get("user_id"),
             "jwt_token": kwargs.get("jwt_token"),
+            "gender": kwargs.get("gender"),
+            "skin_type": kwargs.get("skin_type"),
+            "preference_tags": kwargs.get("preference_tags"),
             # 每轮都显式覆盖，避免 checkpointer 把上一轮图片/子任务带到本轮。
             "image_url": image_url or "",
             "active_subtask": {},
@@ -822,6 +833,7 @@ class AssistantGraph:
             "product_cards": [],
             "sources": [],
             "tool_calls": [],
+            "suggested_questions": [],
             "run_id": run_id,
             "trace_id": trace_id,
             "messages": [HumanMessage(content=human_content)],
@@ -831,8 +843,32 @@ class AssistantGraph:
         }
         return state, run_id, trace_id
 
+    @staticmethod
+    async def _sync_request_profile(state: AssistantState) -> None:
+        """Persist profile fields already carried by chat-service without another API call."""
+        if not state.get("user_id"):
+            return
+        profile = {
+            key: value
+            for key, value in {
+                "gender": state.get("gender"),
+                "skin_type": state.get("skin_type"),
+                "preference_tags": state.get("preference_tags"),
+            }.items()
+            if value is not None
+        }
+        if not profile:
+            return
+        try:
+            await remember_user_preferences(
+                state.get("conversation_id"), state.get("user_id"), profile,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("profile preference sync failed", exc_info=True)
+
     async def run(self, **kwargs) -> dict:
         state, run_id, trace_id = self._make_initial_state(**kwargs)
+        await self._sync_request_profile(state)
         conversation_id = state.get("conversation_id")
         final = await self.graph.ainvoke(state, config={"configurable": {"thread_id": conversation_id}})
         result = final.get("result") or {}
@@ -862,6 +898,7 @@ class AssistantGraph:
         - subgraphs: 让子图（ShoppingAgent 内的 create_agent）事件冒泡
         """
         state, run_id, trace_id = self._make_initial_state(**kwargs)
+        await self._sync_request_profile(state)
         conversation_id = state.get("conversation_id")
 
         # start 事件：告诉前端 trace_id / run_id

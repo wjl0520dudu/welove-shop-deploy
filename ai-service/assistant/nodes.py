@@ -7,6 +7,8 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from agents.state import AssistantState
+from agents.memory import get_business_memory
+from agents.preferences import build_preference_questions
 from agents.prompts import CHITCHAT_PROMPT
 from core.errors import ErrorCode
 from shopping.agent import ShoppingAgent
@@ -30,12 +32,16 @@ _MULTIMODAL_SHOPPING_PROMPT = """你是电商导购。用户传了一张商品�
 3. 结尾可以给一句选购建议（如"预算敏感选X，追求品质选Y"）
 4. 不要虚构商品信息，只用给出的商品字段
 5. 不要说"根据您上传的图片"这类废话，就当作正常推荐来写
+6. 如果候选带有长期偏好匹配信息，可以据此解释推荐，但本轮用户明确要求优先
 
 ## 用户需求
 {query_text}
 
 ## 检索到的候选商品（按相关度降序）
 {product_list}
+
+## 用户长期偏好（仅作软参考）
+{preference_context}
 
 ## 你的推荐（100-200 字，Markdown 格式）
 """
@@ -53,6 +59,12 @@ def _format_products_for_prompt(cards: List[Dict[str, Any]], top_n: int = 5) -> 
         desc = (c.get("description") or "").strip()
         if desc:
             line += f"\n   {desc[:120]}"
+        matches = c.get("_personalization_matches") or []
+        conflicts = c.get("_personalization_conflicts") or []
+        if matches:
+            line += f"\n   长期偏好匹配：{', '.join(matches[:3])}"
+        if conflicts:
+            line += f"\n   偏好冲突提醒：{', '.join(conflicts[:3])}"
         lines.append(line)
     return "\n".join(lines) if lines else "（无候选商品）"
 
@@ -62,6 +74,7 @@ async def _multimodal_shopping(
     query_text: str,
     image_url: str,
     top_k: int = 5,
+    business_memory: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """有图 shopping 分支：直接调 search_multimodal_v1，然后让 LLM 写推荐话术。
 
@@ -70,6 +83,9 @@ async def _multimodal_shopping(
     """
     from shopping.multimodal_search import search_multimodal_v1
     from shopping.relevance_judge import filter_candidates
+    from shopping.personalization import personalized_rerank_candidates
+
+    preferences = dict((business_memory or {}).get("user_preferences") or {})
 
     try:
         # 多召回一批候选，再允许 judge 过滤掉异类；最终仍只返回 top_k，
@@ -85,8 +101,9 @@ async def _multimodal_shopping(
             query_text=query_text or "",
             query_image_url=image_url,
             candidates=results,
-            limit=top_k,
+            limit=retrieval_top_k,
         )
+        results = personalized_rerank_candidates(results, preferences)[:top_k]
     except Exception as e:  # noqa: BLE001
         logger.exception("multimodal shopping retrieval failed")
         return {
@@ -105,6 +122,7 @@ async def _multimodal_shopping(
             "sources": [],
             "tool_calls": [],
             "error": False,
+            "suggested_questions": build_preference_questions(preferences),
         }
 
     # 让 LLM 基于卡片 + query 写推荐话术
@@ -114,6 +132,9 @@ async def _multimodal_shopping(
         prompt = _MULTIMODAL_SHOPPING_PROMPT.format(
             query_text=query_text or "（无文本描述，仅参考图片）",
             product_list=_format_products_for_prompt(results),
+            preference_context=(
+                str(preferences) if preferences else "（暂无长期偏好）"
+            ),
         )
         try:
             resp = await llm.ainvoke(prompt)
@@ -137,7 +158,15 @@ async def _multimodal_shopping(
             "rating": r.get("rating"),
             "sales_count": r.get("sales_count"),
             "sub_category": r.get("sub_category", ""),
-            "reason": "图文多模态检索命中",
+            "reason": (
+                "图文检索命中；符合长期偏好："
+                + "、".join((r.get("_personalization_matches") or [])[:2])
+                if r.get("_personalization_matches")
+                else "图文多模态检索命中"
+            ),
+            "_personalization_score": r.get("_personalization_score", 0.0),
+            "_matched_preferences": r.get("_personalization_matches") or [],
+            "_preference_conflicts": r.get("_personalization_conflicts") or [],
         })
 
     return {
@@ -150,6 +179,7 @@ async def _multimodal_shopping(
             "args": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k},
         }],
         "error": False,
+        "suggested_questions": build_preference_questions(preferences),
     }
 
 
@@ -191,11 +221,20 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
         image_allowed = not active_task or bool(active_task.get("use_image"))
         image_url = (state.get("image_url") or "").strip() if image_allowed else ""
         if image_url:
+            try:
+                persisted_memory = await get_business_memory(
+                    state.get("conversation_id"), state.get("user_id"),
+                )
+            except Exception:  # noqa: BLE001
+                persisted_memory = {}
+            injected_memory = state.get("business_memory") or {}
+            business_memory = {**persisted_memory, **injected_memory}
             result = await _multimodal_shopping(
                 llm=llm,
                 query_text=state.get("question", ""),
                 image_url=image_url,
                 top_k=5,
+                business_memory=business_memory,
             )
             return _merge_result(
                 result,
@@ -326,6 +365,7 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
             "product_cards": state.get("product_cards", []),
             "sources": state.get("sources", []),
             "tool_calls": state.get("tool_calls", []),
+            "suggested_questions": state.get("suggested_questions", []),
             "run_id": state.get("run_id"),
             "trace_id": state.get("trace_id"),
             "route": state.get("route"),
@@ -386,7 +426,10 @@ def _build_agent_messages(state: AssistantState) -> list:
 def _merge_result(result: Dict[str, Any], *, task_type: str,
                   extra: Dict[str, Any] = None) -> dict:
     merged: Dict[str, Any] = {}
-    for key in ("answer", "product_cards", "sources", "tool_calls", "error", "error_code", "message"):
+    for key in (
+        "answer", "product_cards", "sources", "tool_calls", "suggested_questions",
+        "error", "error_code", "message",
+    ):
         if key in result:
             merged[key] = result[key]
     merged.setdefault("answer", "")
@@ -394,6 +437,7 @@ def _merge_result(result: Dict[str, Any], *, task_type: str,
     merged.setdefault("product_cards", [])
     merged.setdefault("sources", [])
     merged.setdefault("tool_calls", [])
+    merged.setdefault("suggested_questions", [])
     merged.setdefault("error", False)
     if extra:
         merged.update(extra)

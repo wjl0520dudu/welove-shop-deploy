@@ -56,6 +56,7 @@ class AgentFinalResponse(BaseModel):
     product_cards: List[Dict[str, Any]] = Field(default_factory=list)
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    suggested_questions: List[str] = Field(default_factory=list)
     error: bool = False
     error_code: Optional[str] = None
     message: Optional[str] = None

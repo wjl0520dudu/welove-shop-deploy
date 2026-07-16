@@ -168,6 +168,10 @@ class AIResponse(FlexibleModel):
     has_sources: bool = Field(False, description="Whether sources are present")
     steps: List[AgentStepDTO] = Field(default_factory=list, description="Agent steps")
     tool_calls: List[ToolCallDTO] = Field(default_factory=list, description="Tool calls")
+    suggested_questions: List[str] = Field(
+        default_factory=list,
+        description="Preference-aware follow-up or recommendation questions",
+    )
     intermediate_conclusions: List[IntermediateConclusionDTO] = Field(
         default_factory=list,
         description="Intermediate conclusions",

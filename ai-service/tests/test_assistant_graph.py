@@ -561,7 +561,7 @@ def test_complex_image_is_scoped_to_shopping_task(monkeypatch):
     async def run():
         multimodal_calls = []
 
-        async def fake_multimodal(*, llm, query_text, image_url, top_k):
+        async def fake_multimodal(*, llm, query_text, image_url, top_k, business_memory=None):
             multimodal_calls.append({"query_text": query_text, "image_url": image_url})
             return {
                 "answer": "找到图片中的同类商品。",

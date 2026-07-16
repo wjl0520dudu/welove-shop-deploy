@@ -28,6 +28,12 @@ class Config:
         os.getenv("ROUTER_ORCHESTRATOR_HINT_CONFIDENCE", "0.90")
     )
 
+    # 1c. Preference-aware soft reranking. These are bounded adjustments applied
+    # after relevance retrieval; current-turn hard constraints remain authoritative.
+    PERSONALIZATION_POSITIVE_BOOST = float(os.getenv("PERSONALIZATION_POSITIVE_BOOST", "0.08"))
+    PERSONALIZATION_NEGATIVE_PENALTY = float(os.getenv("PERSONALIZATION_NEGATIVE_PENALTY", "0.12"))
+    PERSONALIZATION_MULTIMODAL_WEIGHT = float(os.getenv("PERSONALIZATION_MULTIMODAL_WEIGHT", "0.15"))
+
     # 2.RAG 文档分块配置
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))

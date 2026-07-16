@@ -204,8 +204,34 @@ async def remember_user_preferences(
     if not preferences:
         return
     existing = await _get_user(user_id)
-    existing.update(preferences)
+    facts = preferences.get("preference_facts")
+    if isinstance(facts, list):
+        from agents.preferences import merge_preference_facts
+
+        existing["preference_facts"] = merge_preference_facts(
+            existing.get("preference_facts") or [], facts,
+        )
+    existing.update({k: v for k, v in preferences.items() if k != "preference_facts"})
     await _set_user(user_id, existing)
+
+
+async def remember_preference_facts(
+    conversation_id: Optional[str],
+    user_id: Optional[int | str],
+    facts: List[Dict[str, Any]],
+) -> None:
+    """Merge dynamic preference facts into user-level memory.
+
+    Anonymous requests are intentionally ignored so different anonymous sessions
+    never share the fallback ``anonymous`` user namespace.
+    """
+    if not user_id or not facts:
+        return
+    await remember_user_preferences(
+        conversation_id,
+        user_id,
+        {"preference_facts": facts},
+    )
 
 
 # ---- 知识实体记忆（KnowledgeAgent 侧）------------------------------------
