@@ -20,6 +20,14 @@ class Config:
     ORCHESTRATOR_MAX_CONCURRENCY = int(os.getenv("ORCHESTRATOR_MAX_CONCURRENCY", "3"))
     ORCHESTRATOR_TASK_TIMEOUT_SECONDS = float(os.getenv("ORCHESTRATOR_TASK_TIMEOUT_SECONDS", "30"))
 
+    # 1b. Low-cost hybrid router. Rules only claim high-certainty cases; unresolved
+    # requests use one structured LLM call and low-confidence results ask for clarification.
+    ROUTER_RULE_MIN_CONFIDENCE = float(os.getenv("ROUTER_RULE_MIN_CONFIDENCE", "0.90"))
+    ROUTER_LOW_CONFIDENCE_THRESHOLD = float(os.getenv("ROUTER_LOW_CONFIDENCE_THRESHOLD", "0.65"))
+    ROUTER_ORCHESTRATOR_HINT_CONFIDENCE = float(
+        os.getenv("ROUTER_ORCHESTRATOR_HINT_CONFIDENCE", "0.90")
+    )
+
     # 2.RAG 文档分块配置
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))

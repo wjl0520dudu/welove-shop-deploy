@@ -25,6 +25,12 @@ from assistant.orchestration import (
     format_dependency_message,
     scope_task_images,
 )
+from assistant.router import (
+    can_short_circuit_orchestrator,
+    clarification_for_low_confidence,
+    classify_high_confidence_rule,
+    normalize_llm_decision,
+)
 from core.config import config
 from core.errors import ErrorCode
 from tools.router_tools import format_business_memory_for_router
@@ -98,9 +104,20 @@ class AssistantGraph:
                 "orchestrator_reason": "问题为空",
             }
 
+        has_image = bool(state.get("image_url"))
+        if can_short_circuit_orchestrator(question, has_image=has_image):
+            return {
+                "original_question": question,
+                "orchestrator_mode": "simple",
+                "orchestrator_reason": "高确定性单意图规则，跳过 Orchestrator LLM",
+                "sub_questions": [],
+                "sub_results": [],
+                "current_subquestion_index": 0,
+            }
+
         if self._orchestrator_llm is None:
             return self._fallback_orchestrator_decision(
-                question, "编排模型未配置", has_image=bool(state.get("image_url")),
+                question, "编排模型未配置", has_image=has_image,
             )
 
         history_messages = state.get("messages") or [HumanMessage(question)]
@@ -474,6 +491,15 @@ class AssistantGraph:
             "dependency_ids": [str(dep.get("id")) for dep in dependencies],
             "route": result.get("route"),
             "route_reason": result.get("route_reason"),
+            "route_confidence": result.get("route_confidence"),
+            "route_source": result.get("route_source"),
+            "rule_route": result.get("rule_route"),
+            "rule_confidence": result.get("rule_confidence"),
+            "rule_reason": result.get("rule_reason"),
+            "llm_route": result.get("llm_route"),
+            "llm_confidence": result.get("llm_confidence"),
+            "llm_reason": result.get("llm_reason"),
+            "route_fallback_used": bool(result.get("route_fallback_used")),
             "task_type": result.get("task_type") or result.get("route") or "unknown",
             "answer": result.get("answer", ""),
             "product_cards": result.get("product_cards", []),
@@ -579,32 +605,35 @@ class AssistantGraph:
         question = (state.get("question") or "").strip()
 
         active_task = state.get("active_subtask") or {}
-        if active_task:
-            intent_hint = str(active_task.get("intent_hint") or "unknown")
-            use_image = bool(active_task.get("use_image"))
-            image_url = (state.get("image_url") or "").strip()
-            if use_image and image_url:
-                return {
-                    "route": "shopping",
-                    "route_reason": "任务 use_image=true → shopping 多模态分支",
-                }
-            if intent_hint in {"shopping", "knowledge", "chitchat"}:
-                return {
-                    "route": intent_hint,
-                    "route_reason": f"Orchestrator 任务级路由: intent_hint={intent_hint}",
-                }
-
-        # 多模态短路：有图直接判 shopping。文本 LLM 看不到图，让 router 分类
-        # 无意义；用户传图基本都是"找同款/找相似"，走 shopping 分支即可。
-        # 注意：多模态场景 question 可以为空（纯图搜索），必须在空 question 检查之前判断。
-        # Orchestrator 若已拆解子任务，也允许当前子任务的 intent_hint 是 knowledge
-        # 等——只有拿到 image_url 且原始 question 是当前问题时才强制 shopping。
         image_url = (state.get("image_url") or "").strip()
-        if image_url and not active_task:
-            return {"route": "shopping", "route_reason": "带图请求 → 强制 shopping 多模态分支"}
+        task_uses_image = bool(active_task.get("use_image")) if active_task else False
+        has_routable_image = bool(image_url and (not active_task or task_uses_image))
+        if has_routable_image:
+            rule = classify_high_confidence_rule(question, has_image=True)
+            reason = (
+                "任务 use_image=true → shopping 多模态分支"
+                if active_task
+                else "带图请求 → 强制 shopping 多模态分支"
+            )
+            return _route_result(
+                route="shopping",
+                confidence=rule.confidence,
+                source="rule",
+                reason=reason,
+                rule=rule,
+            )
 
         if not question:
-            return {"route": "unknown", "route_reason": "问题为空"}
+            rule = classify_high_confidence_rule(question)
+            return _route_result(
+                route="unknown",
+                confidence=rule.confidence,
+                source="fallback",
+                reason="问题为空，需要用户补充需求",
+                rule=rule,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
 
         # 直接传 state["messages"]（已通过主图 checkpointer 合并了历史）
         # 不要再拼接第二次 question，否则问题出现两次。
@@ -616,12 +645,51 @@ class AssistantGraph:
         cid = state.get("conversation_id")
         uid = state.get("user_id")
         context_text = ""
+        # DAG dependency memory is already scoped to this task and must win over
+        # the shared Store snapshot (for example, a just-produced product list).
+        memory: dict[str, Any] = dict(state.get("business_memory") or {})
         try:
-            memory = await get_business_memory(cid, uid)
-            context_text = format_business_memory_for_router(memory)
+            persisted_memory = await get_business_memory(cid, uid)
+            memory = {**(persisted_memory or {}), **memory}
         except Exception:  # noqa: BLE001
             # Store 读取失败不阻塞分类，退化到纯 messages 分类
             logger.warning("router: 读取 business_memory 失败，退化到纯分类", exc_info=True)
+        context_text = format_business_memory_for_router(memory)
+
+        rule = classify_high_confidence_rule(question, memory)
+        intent_hint = str(active_task.get("intent_hint") or "unknown") if active_task else "unknown"
+
+        # Orchestrator hints are already produced by a structured planning call. Reusing a
+        # valid hint avoids a second LLM call per subtask. A contradictory deterministic
+        # rule is allowed to override it so obvious planner mistakes do not reach an Agent.
+        if active_task and intent_hint in {"shopping", "knowledge", "chitchat"}:
+            if rule.matched and rule.route != intent_hint:
+                return _route_result(
+                    route=rule.route,
+                    confidence=rule.confidence,
+                    source="rule_override",
+                    reason=(
+                        f"高确定性规则覆盖 Orchestrator intent_hint={intent_hint}: "
+                        f"{rule.reason}"
+                    ),
+                    rule=rule,
+                )
+            return _route_result(
+                route=intent_hint,
+                confidence=config.ROUTER_ORCHESTRATOR_HINT_CONFIDENCE,
+                source="orchestrator_hint",
+                reason=f"Orchestrator 任务级路由: intent_hint={intent_hint}",
+                rule=rule,
+            )
+
+        if rule.matched and rule.confidence >= config.ROUTER_RULE_MIN_CONFIDENCE:
+            return _route_result(
+                route=rule.route,
+                confidence=rule.confidence,
+                source="rule",
+                reason=rule.reason,
+                rule=rule,
+            )
 
         # ROUTER_PROMPT 作为首条 system 消息置顶；会话上下文作为第二条 system 消息追加。
         # with_structured_output 直链，不再需要 checkpointer / thread_id / recursion_limit。
@@ -631,18 +699,88 @@ class AssistantGraph:
         router_messages.extend(history_messages)
 
         if self._router_llm is None:
-            return {"route": "unknown", "route_reason": "路由模型未配置"}
+            return _route_result(
+                route="unknown",
+                confidence=0.0,
+                source="fallback",
+                reason="规则未命中且路由模型未配置",
+                rule=rule,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
 
         # with_structured_output 默认 include_raw=False，解析失败会抛异常；
         # 这里兜住，分类失败一律归 unknown，不阻塞主图。
         try:
-            decision = await self._router_llm.ainvoke(router_messages)
+            decision = await self._router_llm.ainvoke(
+                router_messages,
+                config={"tags": ["ai_internal"]},
+            )
         except Exception:  # noqa: BLE001
             logger.warning("router: 结构化分类失败，退化到 unknown", exc_info=True)
-            return {"route": "unknown", "route_reason": "路由分类失败"}
+            return _route_result(
+                route="unknown",
+                confidence=0.0,
+                source="fallback",
+                reason="结构化路由调用失败",
+                rule=rule,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
         if decision is None:
-            return {"route": "unknown", "route_reason": "路由分类失败"}
-        return {"route": decision.task_type, "route_reason": decision.reason}
+            return _route_result(
+                route="unknown",
+                confidence=0.0,
+                source="fallback",
+                reason="结构化路由返回空结果",
+                rule=rule,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
+
+        try:
+            normalized = normalize_llm_decision(decision)
+        except Exception:  # noqa: BLE001
+            logger.warning("router: 结构化分类结果校验失败，进入澄清兜底", exc_info=True)
+            return _route_result(
+                route="unknown",
+                confidence=0.0,
+                source="fallback",
+                reason="结构化路由结果不符合 IntentDecision 契约",
+                rule=rule,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
+        llm_trace = {
+            "route": normalized.task_type,
+            "confidence": normalized.confidence,
+            "reason": normalized.reason,
+        }
+        if (
+            normalized.task_type == "unknown"
+            or normalized.confidence < config.ROUTER_LOW_CONFIDENCE_THRESHOLD
+        ):
+            return _route_result(
+                route="unknown",
+                confidence=normalized.confidence,
+                source="fallback",
+                reason=(
+                    "LLM 路由置信度不足，进入澄清兜底: "
+                    f"route={normalized.task_type}, confidence={normalized.confidence:.3f}"
+                ),
+                rule=rule,
+                llm=llm_trace,
+                fallback_used=True,
+                clarification=clarification_for_low_confidence(question),
+            )
+        return _route_result(
+            route=normalized.task_type,
+            confidence=normalized.confidence,
+            source="llm",
+            reason=normalized.reason or "LLM structured router",
+            rule=rule,
+            llm=llm_trace,
+        )
 
     def _make_initial_state(self, **kwargs) -> tuple[AssistantState, str, str]:
         """构造主图初始 state。返回 (state, run_id, trace_id)。"""
@@ -669,6 +807,16 @@ class AssistantGraph:
             "sub_results": [],
             "route": "",
             "route_reason": "",
+            "route_confidence": None,
+            "route_source": "",
+            "rule_route": None,
+            "rule_confidence": None,
+            "rule_reason": "",
+            "llm_route": None,
+            "llm_confidence": None,
+            "llm_reason": "",
+            "route_fallback_used": False,
+            "route_clarification": "",
             "answer": "",
             "task_type": "",
             "product_cards": [],
@@ -838,6 +986,13 @@ class AssistantGraph:
                 "data": {
                     "task_type": node_output.get("route"),
                     "reason": node_output.get("route_reason"),
+                    "confidence": node_output.get("route_confidence"),
+                    "source": node_output.get("route_source"),
+                    "rule_route": node_output.get("rule_route"),
+                    "rule_confidence": node_output.get("rule_confidence"),
+                    "llm_route": node_output.get("llm_route"),
+                    "llm_confidence": node_output.get("llm_confidence"),
+                    "fallback_used": bool(node_output.get("route_fallback_used")),
                 },
             }
 
@@ -879,6 +1034,9 @@ class AssistantGraph:
                         },
                         "status": result.get("status"),
                         "route": result.get("route"),
+                        "route_confidence": result.get("route_confidence"),
+                        "route_source": result.get("route_source"),
+                        "fallback_used": bool(result.get("route_fallback_used")),
                         "duration_ms": result.get("duration_ms"),
                         "error_code": result.get("error_code"),
                     },
@@ -893,6 +1051,36 @@ class AssistantGraph:
         # subgraphs=True 时子图消息会在 messages 流里冒泡，这里 updates 流一般看不到。
         # 保留结构，未来如果有主图直接调工具的场景可以在这里补充。
         _ = node_name  # 静默 lint
+
+
+def _route_result(
+    *,
+    route: str,
+    confidence: float,
+    source: str,
+    reason: str,
+    rule=None,
+    llm: dict[str, Any] | None = None,
+    fallback_used: bool = False,
+    clarification: str = "",
+) -> dict[str, Any]:
+    """Build one stable routing trace for graph state, API and offline evals."""
+    rule_data = rule.to_dict() if rule is not None else {}
+    llm_data = llm or {}
+    return {
+        "route": route,
+        "route_reason": reason,
+        "route_confidence": max(0.0, min(1.0, float(confidence or 0.0))),
+        "route_source": source,
+        "rule_route": rule_data.get("route"),
+        "rule_confidence": rule_data.get("confidence"),
+        "rule_reason": rule_data.get("reason", ""),
+        "llm_route": llm_data.get("route"),
+        "llm_confidence": llm_data.get("confidence"),
+        "llm_reason": llm_data.get("reason", ""),
+        "route_fallback_used": bool(fallback_used),
+        "route_clarification": clarification,
+    }
 
 
 def _decision_value(decision: Any, key: str, default: Any = None) -> Any:

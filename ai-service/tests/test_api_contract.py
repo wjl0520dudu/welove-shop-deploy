@@ -121,6 +121,27 @@ class TestNormalizeAIResponse:
         assert resp.sub_questions[0]["id"] == "t1"
         assert resp.sub_results[0]["answer"] == "找到商品"
 
+    def test_router_trace_metadata_preserved(self):
+        resp = normalize_ai_response({
+            "answer": "为你推荐",
+            "task_type": "shopping",
+            "route": "shopping",
+            "route_reason": "rule:high-certainty shopping signal 推荐",
+            "route_confidence": 0.94,
+            "route_source": "rule",
+            "rule_route": "shopping",
+            "rule_confidence": 0.94,
+            "rule_reason": "rule hit",
+            "llm_route": None,
+            "route_fallback_used": False,
+        })
+        assert resp.route == "shopping"
+        assert resp.route_confidence == 0.94
+        assert resp.route_source == "rule"
+        assert resp.rule_route == "shopping"
+        assert resp.llm_route is None
+        assert resp.route_fallback_used is False
+
 
 # ---------------- 错误响应 ----------------
 

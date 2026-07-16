@@ -310,7 +310,9 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
         }
 
     async def unknown_node(state: AssistantState) -> dict:
-        msg = "我可以帮你找商品、推荐，或回答商品知识问题，请告诉我你的需求。"
+        msg = state.get("route_clarification") or (
+            "我可以帮你找商品、推荐，或回答商品知识问题，请告诉我你的需求。"
+        )
         return {
             "answer": msg,
             "task_type": "unknown",
@@ -328,6 +330,15 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
             "trace_id": state.get("trace_id"),
             "route": state.get("route"),
             "route_reason": state.get("route_reason"),
+            "route_confidence": state.get("route_confidence"),
+            "route_source": state.get("route_source"),
+            "rule_route": state.get("rule_route"),
+            "rule_confidence": state.get("rule_confidence"),
+            "rule_reason": state.get("rule_reason"),
+            "llm_route": state.get("llm_route"),
+            "llm_confidence": state.get("llm_confidence"),
+            "llm_reason": state.get("llm_reason"),
+            "route_fallback_used": bool(state.get("route_fallback_used")),
             "orchestrator_mode": state.get("orchestrator_mode"),
             "orchestrator_reason": state.get("orchestrator_reason"),
             "sub_questions": state.get("sub_questions", []),

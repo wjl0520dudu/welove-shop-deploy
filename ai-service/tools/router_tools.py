@@ -1,7 +1,7 @@
 """Router 辅助工具集。
 
-**当前 Router 用纯 LLM 分类 + business_memory 注入 prompt 的方案（方案 B）**，
-所以 Router agent 本身不挂工具。这个模块里的函数留作 helper 用：
+**当前 Router 使用高确定性规则 + Structured LLM + 低置信度兜底。**
+Router 本身不挂工具；这个模块保留编排拆分和上下文格式化 helper：
 
 - `detect_compound_intent`：文本层面的复合意图检测（纯规则，不调 LLM）。
   Router 可以用它做兜底判断，未来切 Supervisor 模式时可以直接复用。

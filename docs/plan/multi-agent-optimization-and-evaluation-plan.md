@@ -601,6 +601,32 @@ Level 2：t4，依赖 t3
 
 ## Phase 2：增强低成本路由可靠性
 
+### 当前实现状态（2026-07-16）
+
+已完成主链路实现：
+
+- 高确定性规则覆盖图片检索、明确商品操作、知识问法、问候和对话元问题；
+- 明确单意图可跳过 Orchestrator LLM，减少不必要的规划调用；
+- 规则无法判断时调用一次 Structured LLM Router；
+- LLM 低置信度、调用异常或空结果进入 `unknown` 澄清兜底；
+- DAG 子任务复用 `intent_hint`，高确定性冲突规则可覆盖错误 hint；
+- API、SSE 和 `sub_results` 记录 rule、LLM、最终 route、confidence、source 和 fallback；
+- 新增路由 Golden Dataset、指标计算和 rules/hybrid 离线评测入口。
+
+测试与评测方式见 `docs/plan/phase2-router-test-guide.md`。
+
+### 实测结果
+
+已使用 22 条路由 Golden Case 完成混合路由评测：
+
+| 指标 | 结果 | 说明 |
+|---|---:|---|
+| Route Accuracy | 95.45% | 22 条 Case 中 21 条最终路由正确 |
+| Misroute Rate | 0% | 没有请求被静默送入错误 Agent |
+| Rule Direct Rate | 81.82% | 18/22 条 Case 由规则直接完成路由 |
+
+结果表明，当前规则优先策略已经覆盖绝大多数明确请求；剩余不确定请求交给 LLM 或安全澄清兜底，未产生业务 Agent 误路由。以上数据属于离线 Golden Dataset 结果，不等同于线上真实流量指标。
+
 ### 推荐方案
 
 ```text

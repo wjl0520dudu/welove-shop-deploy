@@ -172,6 +172,17 @@ class AIResponse(FlexibleModel):
         default_factory=list,
         description="Intermediate conclusions",
     )
+    route: Optional[str] = Field(None, description="Final selected route")
+    route_reason: Optional[str] = Field(None, description="Final route reason")
+    route_confidence: Optional[float] = Field(None, description="Final route confidence")
+    route_source: Optional[str] = Field(None, description="rule, llm, orchestrator_hint or fallback")
+    rule_route: Optional[str] = Field(None, description="Deterministic rule candidate")
+    rule_confidence: Optional[float] = Field(None, description="Deterministic rule confidence")
+    rule_reason: Optional[str] = Field(None, description="Deterministic rule reason")
+    llm_route: Optional[str] = Field(None, description="Structured LLM route candidate")
+    llm_confidence: Optional[float] = Field(None, description="Structured LLM confidence")
+    llm_reason: Optional[str] = Field(None, description="Structured LLM reason")
+    route_fallback_used: bool = Field(False, description="Whether safe route fallback was used")
     orchestrator_mode: Optional[str] = Field(None, description="Orchestrator mode: simple or complex")
     orchestrator_reason: Optional[str] = Field(None, description="Orchestrator planning reason")
     sub_questions: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestrator sub tasks")

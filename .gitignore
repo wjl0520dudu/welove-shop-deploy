@@ -166,6 +166,7 @@ admin-bff/target/
 # ai-service/ 正式入库,仅排除临时调试文件
 /ai-service/tmp_debug/
 /ai-service/tt
+/ai-service/evals/reports/
 
 # 单体附带的第三方二进制/文档(如果本地还留着)
 /backend/

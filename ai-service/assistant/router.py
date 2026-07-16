@@ -1,143 +1,221 @@
+"""Low-cost, auditable intent-routing helpers.
+
+The main graph uses a conservative three-stage policy:
+
+1. high-certainty deterministic rules;
+2. structured LLM routing for unresolved requests;
+3. an ``unknown`` clarification fallback for low-confidence output.
+
+Rules intentionally cover only clear cases. Ambiguous, contextual, or mixed
+expressions are left to the LLM instead of being forced into a business agent.
+"""
+
 from __future__ import annotations
-import json
-import logging
+
 import re
-from typing import Any, Dict, List
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from dataclasses import asdict, dataclass
+from typing import Any, Mapping
+
 from agents.schemas import IntentDecision
-from agents.prompts import ROUTER_PROMPT
 
-logger = logging.getLogger("ai-service.router")
+VALID_ROUTES = {"shopping", "knowledge", "chitchat", "unknown"}
 
-# 兜底规则关键词（按命中优先级）
-_SHOPPING_WORDS = ("推荐", "买", "找商品", "商品", "防晒", "面霜", "口红", "精华",
-                  "比较", "对比", "哪个好", "性价比", "便宜", "预算", "销量", "评分")
-_KNOWLEDGE_WORDS = ("成分", "怎么用", "用法", "区别", "是什么", "为什么", "原理",
-                   "功效", "副作用", "科普", "知识", "适合什么", "可以吗")
-_CHITCHAT_WORDS = ("你好", "hello", "hi", "在吗", "谢谢", "再见", "哈喽", "嗨")
-
-
-ROUTER_CHAT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", ROUTER_PROMPT + "\n\n格式要求：只输出一段 JSON 文本，不要 markdown 代码块，不要解释。\n"
-     "字段：{{\"task_type\":\"shopping|knowledge|chitchat|unknown\",\"confidence\":0.0,\"reason\":\"简短理由\"}}"),
-    ("human", "最近对话：\n{history}\n\n业务记忆：{business_memory}\n\n本次问题：{question}"),
-])
-
-
-async def classify_intent(llm, *, question: str, messages: List[Dict[str, Any]],
-                          business_memory: Dict[str, Any]) -> IntentDecision:
-    """LangChain 管道式路由：ROUTER_CHAT_PROMPT | llm | StrOutputParser -> 解析 JSON -> 规则兜底。
-
-    完全不依赖模型原生 function calling / structured output，对所有 OpenAI 兼容代理通用。
-    """
-    if llm is None:
-        return IntentDecision(task_type="unknown", reason="llm not configured")
-
-    history_text = _format_recent_messages(messages, limit=8)
-    memory_text = json.dumps(business_memory, ensure_ascii=False)
-
-    chain = ROUTER_CHAT_PROMPT | llm | StrOutputParser()
-    try:
-        raw = await chain.ainvoke({
-            "history": history_text,
-            "business_memory": memory_text,
-            "question": question,
-        })
-    except Exception as e:
-        logger.warning("router chain ainvoke failed, fallback to rules: %s", e)
-        return _rule_based_intent(question, messages, business_memory)
-
-    decision = _parse_router_text(raw, question, messages, business_memory)
-    if decision is None:
-        logger.warning("router output not parseable, fallback to rules: %s", (raw or "")[:200])
-        return _rule_based_intent(question, messages, business_memory)
-    return decision
+_META_PATTERNS = (
+    "刚才问", "刚才说", "刚才聊", "还记得", "回顾一下", "总结一下",
+    "总结我们的对话", "我叫什么", "你是谁", "你能做什么",
+)
+_GREETING_RE = re.compile(
+    r"^(你好|您好|哈喽|嗨|hello|hi|在吗|谢谢|多谢|辛苦了|再见|拜拜)[！!。.，,\s]*$",
+    re.IGNORECASE,
+)
+_SHOPPING_PATTERNS = (
+    "推荐", "帮我找", "帮我选", "搜一下", "搜索", "找商品", "找一款", "找几款",
+    "找同款", "找相似", "对比", "比较", "哪个好", "哪款好", "性价比",
+    "排行榜", "销量", "评分", "多少钱", "价格", "库存", "有货", "缺货",
+    "加入购物车", "加购物车", "加购", "下单", "购买", "想买", "买一", "怎么买",
+)
+_KNOWLEDGE_PATTERNS = (
+    "成分", "功效", "作用", "原理", "副作用", "禁忌", "注意事项",
+    "怎么用", "如何使用", "用法", "区别", "为什么", "是什么", "什么意思",
+    "能不能", "可以吗", "是否可以", "是否适合", "适合什么", "适合哪种", "怎么选",
+    "搭配", "浓度", "机制", "科普",
+)
+_PRODUCT_REFERENCE_PATTERNS = (
+    "它多少钱", "更便宜", "评分更高", "销量更高", "还有别的",
+    "其他颜色", "什么价格", "什么规格", "有库存",
+)
+_NEUTRAL_REFERENCE_PATTERNS = (
+    "第一个", "第二个", "第三个", "最后一个", "这个", "那个", "这款", "那款",
+    "刚才那个", "刚刚那个", "上一个", "它怎么样", "它们怎么样",
+)
+_KNOWLEDGE_REFERENCE_PATTERNS = (
+    "它的成分", "它们的成分", "它的功效", "它们的功效", "它的副作用",
+    "它们的副作用", "怎么搭配", "怎么使用", "浓度多少", "原理是什么",
+)
+_COMPOUND_MARKERS = (
+    "然后", "顺便", "另外", "同时", "并且", "以及", "还要", "再帮我",
+    "再问", "除此之外", "一并", "分别", "并告诉", "并介绍", "并说明", "并分析",
+    "并解释", "并回答",
+)
 
 
-def _parse_router_text(raw: str, question: str, messages: List[Dict[str, Any]],
-                        business_memory: Dict[str, Any]):
-    """把模型文本（可能含 JSON / 代码块 / 多余文字）解析成 IntentDecision。"""
-    text = (raw or "").strip()
+@dataclass(frozen=True)
+class RuleRouteDecision:
+    route: str = "unknown"
+    confidence: float = 0.0
+    reason: str = "rule: no high-certainty match"
+    matched: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def classify_high_confidence_rule(
+    question: str,
+    business_memory: Mapping[str, Any] | None = None,
+    *,
+    has_image: bool = False,
+) -> RuleRouteDecision:
+    """Classify only deterministic cases; return unmatched for ambiguity."""
+    text = (question or "").strip()
+    lowered = text.lower()
+    memory = business_memory or {}
+
+    if has_image:
+        return RuleRouteDecision(
+            route="shopping",
+            confidence=1.0,
+            reason="rule:image present -> shopping multimodal branch",
+            matched=True,
+        )
     if not text:
-        return None
-    # 去 ```json ... ``` 包裹
-    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S)
-    if fence:
-        text = fence.group(1).strip()
-    # 直接 json.loads
-    try:
-        p = json.loads(text)
-        return _to_intent_decision(p) if isinstance(p, dict) else None
-    except Exception:
-        pass
-    # 抽第一个 JSON 对象
-    match = re.search(r"\{[\s\S]*?\}", text)
-    if not match:
-        return None
-    try:
-        p = json.loads(match.group(0))
-        return _to_intent_decision(p) if isinstance(p, dict) else None
-    except Exception:
-        return None
+        return RuleRouteDecision(
+            route="unknown",
+            confidence=1.0,
+            reason="rule:empty question",
+            matched=True,
+        )
+    if any(pattern in lowered for pattern in _META_PATTERNS):
+        return RuleRouteDecision(
+            route="chitchat",
+            confidence=0.98,
+            reason="rule:conversation meta question",
+            matched=True,
+        )
+    if _GREETING_RE.fullmatch(text):
+        return RuleRouteDecision(
+            route="chitchat",
+            confidence=0.99,
+            reason="rule:standalone greeting or courtesy",
+            matched=True,
+        )
+
+    has_cards = bool(memory.get("last_product_cards") or memory.get("last_focused_product"))
+    has_entities = bool(memory.get("last_knowledge_entities"))
+    product_reference = any(pattern in lowered for pattern in _PRODUCT_REFERENCE_PATTERNS)
+    knowledge_reference = any(pattern in lowered for pattern in _KNOWLEDGE_REFERENCE_PATTERNS)
+    neutral_reference = any(pattern in lowered for pattern in _NEUTRAL_REFERENCE_PATTERNS)
+    shopping_hits = [p for p in _SHOPPING_PATTERNS if p in lowered]
+    knowledge_hits = [p for p in _KNOWLEDGE_PATTERNS if p in lowered]
+
+    # Domain-specific reference words are stronger than generic keyword matches.
+    if has_cards and product_reference and not knowledge_reference and not knowledge_hits:
+        return RuleRouteDecision(
+            route="shopping",
+            confidence=0.96,
+            reason="rule:reference to previous product cards",
+            matched=True,
+        )
+    if has_entities and (knowledge_reference or knowledge_hits) and not shopping_hits:
+        return RuleRouteDecision(
+            route="knowledge",
+            confidence=0.96,
+            reason="rule:reference to previous knowledge entities",
+            matched=True,
+        )
+    if neutral_reference and has_cards and not has_entities and not knowledge_hits:
+        return RuleRouteDecision(
+            route="shopping",
+            confidence=0.93,
+            reason="rule:neutral reference with product-only memory",
+            matched=True,
+        )
+    if neutral_reference and has_entities and not has_cards and not shopping_hits:
+        return RuleRouteDecision(
+            route="knowledge",
+            confidence=0.93,
+            reason="rule:neutral reference with knowledge-only memory",
+            matched=True,
+        )
+
+    # Mixed signals require context/semantic reasoning. Do not guess with rules.
+    if shopping_hits and knowledge_hits:
+        return RuleRouteDecision(
+            reason=(
+                "rule:mixed shopping and knowledge signals; defer to structured router "
+                f"(shopping={shopping_hits[:2]}, knowledge={knowledge_hits[:2]})"
+            ),
+        )
+    if shopping_hits:
+        return RuleRouteDecision(
+            route="shopping",
+            confidence=0.94,
+            reason=f"rule:high-certainty shopping signal {shopping_hits[0]}",
+            matched=True,
+        )
+    if knowledge_hits:
+        return RuleRouteDecision(
+            route="knowledge",
+            confidence=0.94,
+            reason=f"rule:high-certainty knowledge signal {knowledge_hits[0]}",
+            matched=True,
+        )
+
+    return RuleRouteDecision()
 
 
-def _to_intent_decision(data: Dict[str, Any]):
-    task_type = str(data.get("task_type", "unknown")).lower().strip()
-    if task_type not in ("shopping", "knowledge", "chitchat", "unknown"):
-        # 历史残留 cart/plan_execute 等不认识，统一 unknown
-        task_type = "unknown"
-    try:
-        confidence = float(data.get("confidence", 0.0))
-    except (TypeError, ValueError):
-        confidence = 0.0
-    return IntentDecision(task_type=task_type, confidence=confidence,
-                          reason=str(data.get("reason", "")))
+def can_short_circuit_orchestrator(question: str, *, has_image: bool = False) -> bool:
+    """Whether an obviously single-intent request can skip the planner LLM."""
+    text = (question or "").strip()
+    if any(marker in text for marker in _COMPOUND_MARKERS):
+        return False
+    if has_image:
+        # A plain image lookup is deterministic. Image + explicit knowledge wording
+        # may contain multiple tasks and must still be inspected by Orchestrator.
+        lowered = text.lower()
+        return not text or not any(pattern in lowered for pattern in _KNOWLEDGE_PATTERNS)
+    return classify_high_confidence_rule(text).matched
 
 
-def _rule_based_intent(question: str, messages: List[Dict[str, Any]],
-                       business_memory: Dict[str, Any]) -> IntentDecision:
-    """无 LLM 或解析失败时的兜底分类：上下文优先（结合记忆）+关键词命中。"""
-    text = (question or "").lower()
-    # 上下文：上一轮已推荐过商品 -> 本轮更可能是 shopping（如"第二个怎么样"）
-    last_cards = business_memory.get("last_product_cards") or []
-    if last_cards and re.search(r"第.个|这个|那个|刚.{0,2}个", question or ""):
-        return IntentDecision(task_type="shopping", confidence=0.6,
-                              reason="rule: reference to previous product cards")
-    score = {"shopping": 0, "knowledge": 0, "chitchat": 0}
-    for w in _SHOPPING_WORDS:
-        if w in text:
-            score["shopping"] += 2
-    for w in _KNOWLEDGE_WORDS:
-        if w in text:
-            score["knowledge"] += 2
-    for w in _CHITCHAT_WORDS:
-        if w in text:
-            score["chitchat"] += 3
-    best = max(score, key=score.get)
-    if score[best] <= 0:
-        return IntentDecision(task_type="unknown", confidence=0.3, reason="rule: no keyword hit")
-    return IntentDecision(task_type=best, confidence=0.5, reason=f"rule: keyword hit {best}")
+def normalize_llm_decision(decision: Any) -> IntentDecision:
+    """Normalize dict/Pydantic router output and keep it inside graph routes."""
+    if isinstance(decision, IntentDecision):
+        normalized = decision
+    elif isinstance(decision, Mapping):
+        normalized = IntentDecision.model_validate(dict(decision))
+    else:
+        normalized = IntentDecision(
+            task_type=str(getattr(decision, "task_type", "unknown") or "unknown"),
+            confidence=getattr(decision, "confidence", 0.0) or 0.0,
+            reason=str(getattr(decision, "reason", "") or ""),
+        )
+
+    route = str(normalized.task_type).lower().strip()
+    # ``cart`` is a historical schema value. The main graph owns cart behavior
+    # under ShoppingAgent and has no independent cart node.
+    if route == "cart":
+        route = "shopping"
+    if route not in VALID_ROUTES:
+        route = "unknown"
+    confidence = max(0.0, min(1.0, float(normalized.confidence or 0.0)))
+    return IntentDecision(task_type=route, confidence=confidence, reason=normalized.reason)
 
 
-def _format_recent_messages(messages: List[Dict[str, Any]], limit: int = 8) -> str:
-    """把最近 limit 条消息拼成 "user: ... / assistant: ..." 文本，供 router 参考。"""
-    if not messages:
-        return "（暂无历史）"
-    role_map = {"user": "用户", "assistant": "助手", "system": "系统"}
-    lines = []
-    for msg in messages[-limit:]:
-        if not isinstance(msg, dict):
-            continue
-        role = role_map.get(msg.get("role", ""), msg.get("role", "?"))
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(str(c) for c in content)
-        content = str(content).strip()
-        if not content:
-            continue
-        if len(content) > 500:
-            content = content[:500] + "…"
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines) if lines else "（暂无历史）"
+def clarification_for_low_confidence(question: str) -> str:
+    """Return a stable, actionable clarification without another model call."""
+    if not (question or "").strip():
+        return "请告诉我你想找什么商品，或想了解哪方面的商品知识。"
+    return (
+        "我还不能确定你是想查找/比较具体商品，还是想了解成分、功效或用法。"
+        "请补充一下你的目标，我再继续帮你。"
+    )

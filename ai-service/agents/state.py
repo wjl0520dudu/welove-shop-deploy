@@ -28,6 +28,16 @@ class AssistantState(TypedDict):
     # ── 路由节点产出 ──
     route: NotRequired[str]
     route_reason: NotRequired[str]
+    route_confidence: NotRequired[float]
+    route_source: NotRequired[str]
+    rule_route: NotRequired[str]
+    rule_confidence: NotRequired[float]
+    rule_reason: NotRequired[str]
+    llm_route: NotRequired[str]
+    llm_confidence: NotRequired[float]
+    llm_reason: NotRequired[str]
+    route_fallback_used: NotRequired[bool]
+    route_clarification: NotRequired[str]
 
     # ── 业务节点产出 ──
     answer: NotRequired[str]
