@@ -183,3 +183,6 @@ admin-bff/target/
 .user_login_resp.json
 .user_token.txt
 web/package-lock.json
+
+# -------- Local evaluation / planning notes (do not commit) --------
+/docs/agent-evaluation-playbook.local.md

@@ -132,6 +132,7 @@ def normalize_ai_response(
         orchestrator_reason=result.get("orchestrator_reason"),
         sub_questions=result.get("sub_questions") or [],
         sub_results=result.get("sub_results") or [],
+        task_levels=result.get("task_levels") or [],
     )
     return response
 

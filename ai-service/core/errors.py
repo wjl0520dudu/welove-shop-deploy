@@ -26,6 +26,9 @@ class ErrorCode:
     ASSISTANT_ERROR = "AI_ASSISTANT_ERROR"
     ROUTING_FAILED = "AI_ROUTING_FAILED"
     ORCHESTRATOR_PARTIAL_ERROR = "AI_ORCHESTRATOR_PARTIAL_ERROR"
+    ORCHESTRATOR_PLAN_INVALID = "AI_ORCHESTRATOR_PLAN_INVALID"
+    ORCHESTRATOR_TASK_TIMEOUT = "AI_ORCHESTRATOR_TASK_TIMEOUT"
+    ORCHESTRATOR_DEPENDENCY_FAILED = "AI_ORCHESTRATOR_DEPENDENCY_FAILED"
 
     # ── 各子 agent ───────────────────────────────
     SHOPPING_ERROR = "AI_SHOPPING_ERROR"
@@ -63,6 +66,9 @@ USER_MESSAGE_HINT: dict[str, str] = {
     ErrorCode.ASSISTANT_ERROR: "AI 助手暂时不可用",
     ErrorCode.ROUTING_FAILED: "无法理解你的请求，请换个说法",
     ErrorCode.ORCHESTRATOR_PARTIAL_ERROR: "部分问题处理失败，请稍后重试",
+    ErrorCode.ORCHESTRATOR_PLAN_INVALID: "复杂问题拆解失败，请换个说法后重试",
+    ErrorCode.ORCHESTRATOR_TASK_TIMEOUT: "部分问题处理超时，请稍后重试",
+    ErrorCode.ORCHESTRATOR_DEPENDENCY_FAILED: "前置问题处理失败，后续问题暂时无法继续",
     ErrorCode.SHOPPING_ERROR: "商品搜索暂时不可用，请稍后重试",
     ErrorCode.KNOWLEDGE_ERROR: "知识检索暂时不可用，请稍后重试",
     ErrorCode.CHITCHAT_ERROR: "闲聊回复失败，请稍后重试",

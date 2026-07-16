@@ -36,6 +36,12 @@ async def build_shopping_context_from_runtime(runtime: ToolRuntime) -> ShoppingC
         memory = await get_business_memory(conversation_id, user_id)
     except Exception:  # noqa: BLE001 —— Store 不可用时降级为空 memory，链路继续
         memory = {}
+    # DAG 后置任务会把前置任务的结构化商品结果放在 task-local memory 中。
+    # 显式注入优先于 Store，避免并发子任务对 last_product_cards 的覆盖顺序
+    # 影响依赖任务的比较/详情能力。
+    injected_memory = state.get("business_memory")
+    if isinstance(injected_memory, dict):
+        memory = {**memory, **injected_memory}
 
     return ShoppingContext(
         conversation_id=conversation_id,

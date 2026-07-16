@@ -20,8 +20,8 @@ class AssistantState(TypedDict):
     jwt_token: NotRequired[str]
     # 多模态输入：单张图片 URL（可以是 OSS 绝对 URL，也可以是相对路径，
     # 后端调用 DashScope 前会走 _normalize_image_url 拼上 IMAGE_BASE_URL）。
-    # 有图时 shopping_node 走多模态检索链路（search_multimodal_v1），
-    # 无图时走原有 ShoppingAgent 纯文本链路。
+    # simple 请求有图时 shopping_node 走多模态链路；complex 请求必须由
+    # active_subtask.use_image=true 才能消费图片，避免图片污染知识子任务。
     # TODO(base64): 后续如支持前端直传 base64，会先上传到 OSS 转成 URL 再进这个字段。
     image_url: NotRequired[str]
 
@@ -54,6 +54,9 @@ class AssistantState(TypedDict):
     subtask_heading: NotRequired[str]
     current_subquestion_index: NotRequired[int]
     sub_results: NotRequired[list[dict[str, Any]]]
+    task_levels: NotRequired[list[list[str]]]
+    dependency_context: NotRequired[list[dict[str, Any]]]
+    orchestrator_plan_error: NotRequired[str]
 
 
 class ShoppingAgentState(AgentState):
@@ -69,6 +72,7 @@ class ShoppingAgentState(AgentState):
     conversation_id: NotRequired[str]
     user_id: NotRequired[int | str]
     jwt_token: NotRequired[str]
+    business_memory: NotRequired[dict[str, Any]]
 
 
 class KnowledgeAgentState(AgentState):

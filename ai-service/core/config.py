@@ -14,6 +14,12 @@ class Config:
     LLM_MODEL = os.getenv("LLM_MODEL", "")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "openai")  # 模型提供商，默认为 openai
 
+    # 1a. Orchestrator DAG 配置
+    ORCHESTRATOR_MAX_TASKS = int(os.getenv("ORCHESTRATOR_MAX_TASKS", "5"))
+    ORCHESTRATOR_MAX_DEPTH = int(os.getenv("ORCHESTRATOR_MAX_DEPTH", "4"))
+    ORCHESTRATOR_MAX_CONCURRENCY = int(os.getenv("ORCHESTRATOR_MAX_CONCURRENCY", "3"))
+    ORCHESTRATOR_TASK_TIMEOUT_SECONDS = float(os.getenv("ORCHESTRATOR_TASK_TIMEOUT_SECONDS", "30"))
+
     # 2.RAG 文档分块配置
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))

@@ -187,7 +187,9 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
         # 多模态分支：state 里有 image_url 时走图文多模态检索，
         # 不进 ShoppingAgent 的 LLM tool loop（文本 LLM 看不到图，让它决定
         # 要不要调多模态工具没意义）
-        image_url = (state.get("image_url") or "").strip()
+        active_task = state.get("active_subtask") or {}
+        image_allowed = not active_task or bool(active_task.get("use_image"))
+        image_url = (state.get("image_url") or "").strip() if image_allowed else ""
         if image_url:
             result = await _multimodal_shopping(
                 llm=llm,
@@ -330,6 +332,7 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
             "orchestrator_reason": state.get("orchestrator_reason"),
             "sub_questions": state.get("sub_questions", []),
             "sub_results": state.get("sub_results", []),
+            "task_levels": state.get("task_levels", []),
             "error": bool(state.get("error", False)),
             "error_code": state.get("error_code"),
             "message": state.get("message"),
@@ -364,6 +367,8 @@ def _build_agent_messages(state: AssistantState) -> list:
                 out.append(HumanMessage(content=content))
             elif mtype == "ai":
                 out.append(AIMessage(content=content))
+            elif mtype == "system":
+                out.append(SystemMessage(content=content))
     return out
 
 

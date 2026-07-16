@@ -116,14 +116,19 @@ ORCHESTRATOR_PROMPT = """你是「微爱商城」AI 助手的请求编排器（O
    - chitchat：闲聊或元问题
    - unknown：无法判断
 5. 最多拆 5 个任务，避免过度拆解。
+6. 如果本轮携带图片：
+   - 只有明确需要根据图片找同款、相似商品或识别商品的 shopping 子任务设置 use_image=true
+   - knowledge/chitchat 子任务必须设置 use_image=false
+   - 后续价格比较、详情分析如果依赖图片检索结果，应使用 depends_on 依赖图片 shopping 子任务，use_image=false
+   - 不要让多个子任务重复使用同一张图片，除非它们确实是彼此独立的图片检索任务
 
 ## 示例
 
 用户："给我推荐适合油皮的防晒，然后我还想知道烟酰胺是什么成分，还有你推荐的这些价格对比如何？"
 返回 complex，tasks：
 - t1: "给我推荐适合油皮的防晒" intent_hint=shopping depends_on=[]
-- t2: "烟酰胺是什么成分？" intent_hint=knowledge depends_on=[]
-- t3: "你推荐的这些商品价格对比如何？" intent_hint=shopping depends_on=["t1"]
+- t2: "烟酰胺是什么成分？" intent_hint=knowledge depends_on=[] use_image=false
+- t3: "你推荐的这些商品价格对比如何？" intent_hint=shopping depends_on=["t1"] use_image=false
 
 只返回结构化结果，不要输出自然语言解释。""".strip()
 

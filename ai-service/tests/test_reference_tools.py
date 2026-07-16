@@ -10,6 +10,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+# 所有测试都走正则兜底路径（不调 LLM），确保结果可预测
+@pytest.fixture(autouse=True)
+def _mock_llm():
+    """让 resolve_reference 跳过 LLM 路径，走正则兜底，避免 LLM 非确定性。"""
+    with patch("tools.reference_tools.get_llm", return_value=None):
+        yield
+
+
 # ---- fixtures ---------------------------------------------------------------
 
 def _make_runtime(conversation_id="c1", user_id=1):

@@ -201,5 +201,6 @@ class TestContractConsistency:
             "confirm_card", "cart_selection", "cart_list",
             "run_id", "trace_id", "error", "error_code", "message",
             "orchestrator_mode", "orchestrator_reason", "sub_questions", "sub_results",
+            "task_levels",
         }
         assert required.issubset(fields), f"missing: {required - fields}"

@@ -169,6 +169,7 @@ class ShoppingAgent:
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                     "jwt_token": jwt_token,
+                    "business_memory": effective_memory,
                 },
                 config={
                     "configurable": {"thread_id": str(uuid4())},

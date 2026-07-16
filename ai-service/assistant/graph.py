@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+import asyncio
 import logging
 import re
+import time
 from typing import Any, AsyncIterator, Dict
 from uuid import uuid4
 
@@ -9,12 +11,21 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from agents.memory import get_business_memory
+from agents.memory import get_business_memory, remember_product_cards
 from agents.schemas import IntentDecision, OrchestratorDecision
 from agents.prompts import ORCHESTRATOR_PROMPT, ROUTER_PROMPT
 from agents.state import AssistantState
 from agents import runtime as _runtime  # 用模块引用，运行时动态读 checkpointer/store
 from assistant.nodes import make_nodes
+from assistant.orchestration import (
+    PlanValidationError,
+    build_task_levels,
+    dependency_business_memory,
+    dependency_payload,
+    format_dependency_message,
+    scope_task_images,
+)
+from core.config import config
 from core.errors import ErrorCode
 from tools.router_tools import format_business_memory_for_router
 
@@ -51,13 +62,12 @@ class AssistantGraph:
     def _build(self):
         g = StateGraph(AssistantState)
         g.add_node("analyze_request", self._analyze_request)
-        g.add_node("prepare_subtask", self._prepare_subtask)
         g.add_node("route_intent", self._route)
         g.add_node("shopping", self._nodes["shopping_node"])
         g.add_node("knowledge", self._nodes["knowledge_node"])
         g.add_node("chitchat", self._nodes["chitchat_node"])
         g.add_node("unknown", self._nodes["unknown_node"])
-        g.add_node("collect_subtask", self._collect_subtask)
+        g.add_node("execute_dag", self._execute_dag)
         g.add_node("synthesize_final", self._synthesize_final)
         g.add_node("format_response", self._nodes["format_response"])
 
@@ -65,23 +75,14 @@ class AssistantGraph:
         g.add_conditional_edges(
             "analyze_request",
             self._after_analyze,
-            {"simple": "route_intent", "complex": "prepare_subtask"},
+            {"simple": "route_intent", "complex": "execute_dag", "invalid": "format_response"},
         )
-        g.add_edge("prepare_subtask", "route_intent")
         g.add_conditional_edges("route_intent", lambda s: s.get("route") or "unknown",
                                 {"shopping": "shopping", "knowledge": "knowledge",
                                  "chitchat": "chitchat", "unknown": "unknown"})
         for n in ("shopping", "knowledge", "chitchat", "unknown"):
-            g.add_conditional_edges(
-                n,
-                self._after_business_node,
-                {"simple": "format_response", "complex": "collect_subtask"},
-            )
-        g.add_conditional_edges(
-            "collect_subtask",
-            self._after_collect,
-            {"next": "prepare_subtask", "done": "synthesize_final"},
-        )
+            g.add_edge(n, "format_response")
+        g.add_edge("execute_dag", "synthesize_final")
         g.add_edge("synthesize_final", "format_response")
         g.add_edge("format_response", END)
         # 从 runtime 模块动态读，确保拿到的是 init_runtime() 覆盖后的实例
@@ -98,7 +99,9 @@ class AssistantGraph:
             }
 
         if self._orchestrator_llm is None:
-            return self._fallback_orchestrator_decision(question, "编排模型未配置")
+            return self._fallback_orchestrator_decision(
+                question, "编排模型未配置", has_image=bool(state.get("image_url")),
+            )
 
         history_messages = state.get("messages") or [HumanMessage(question)]
         cid = state.get("conversation_id")
@@ -111,6 +114,11 @@ class AssistantGraph:
             logger.warning("orchestrator: 读取 business_memory 失败，退化到纯问题分析", exc_info=True)
 
         messages: list = [SystemMessage(content=ORCHESTRATOR_PROMPT)]
+        if state.get("image_url"):
+            messages.append(SystemMessage(content=(
+                "本轮用户携带了一张参考图片。请严格按任务粒度设置 use_image："
+                "只有图片检索 shopping 子任务可为 true，knowledge/chitchat 和依赖后续任务必须为 false。"
+            )))
         if context_text:
             messages.append(SystemMessage(content=context_text))
         messages.extend(history_messages)
@@ -122,7 +130,9 @@ class AssistantGraph:
             )
         except Exception:  # noqa: BLE001
             logger.warning("orchestrator: 结构化拆解失败，尝试启发式拆解", exc_info=True)
-            return self._fallback_orchestrator_decision(question, "结构化拆解失败")
+            return self._fallback_orchestrator_decision(
+                question, "结构化拆解失败", has_image=bool(state.get("image_url")),
+            )
 
         if decision is None:
             logger.warning(
@@ -136,26 +146,61 @@ class AssistantGraph:
                 )
             except Exception:  # noqa: BLE001
                 logger.warning("orchestrator: 结构化拆解重试失败，尝试启发式拆解", exc_info=True)
-                return self._fallback_orchestrator_decision(question, "结构化拆解重试失败")
+                return self._fallback_orchestrator_decision(
+                    question, "结构化拆解重试失败", has_image=bool(state.get("image_url")),
+                )
 
         if decision is None:
             logger.warning(
                 "orchestrator: 结构化拆解重试后仍为空，尝试启发式拆解 question=%r",
                 question,
             )
-            return self._fallback_orchestrator_decision(question, "结构化拆解返回空")
+            return self._fallback_orchestrator_decision(
+                question, "结构化拆解返回空", has_image=bool(state.get("image_url")),
+            )
 
-        normalized = self._normalize_orchestrator_decision(question, decision)
+        normalized = self._normalize_orchestrator_decision(
+            question, decision, has_image=bool(state.get("image_url")),
+        )
+        if normalized.get("orchestrator_plan_error"):
+            repair_messages = [
+                *messages,
+                SystemMessage(content=(
+                    "上一次任务计划无法执行，错误为："
+                    f"{normalized['orchestrator_plan_error']}。请重新生成无重复 ID、无非法依赖、"
+                    "无环且不超过限制的完整任务计划。"
+                )),
+            ]
+            try:
+                repaired = await self._orchestrator_llm.ainvoke(
+                    repair_messages,
+                    config={"tags": ["ai_internal"]},
+                )
+                if repaired is not None:
+                    normalized = self._normalize_orchestrator_decision(
+                        question, repaired, has_image=bool(state.get("image_url")),
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning("orchestrator: 非法计划修复失败", exc_info=True)
+
         decision_mode = str(_decision_value(decision, "mode", "simple") or "simple").lower()
         if decision_mode == "complex" and normalized.get("orchestrator_mode") == "simple":
             logger.warning(
                 "orchestrator: LLM 声称 complex 但 tasks 不足，尝试启发式补救 question=%r",
                 question,
             )
-            return self._fallback_orchestrator_decision(question, "LLM 拆解不完整")
+            return self._fallback_orchestrator_decision(
+                question, "LLM 拆解不完整", has_image=bool(state.get("image_url")),
+            )
         return normalized
 
-    def _normalize_orchestrator_decision(self, question: str, decision: Any) -> dict:
+    def _normalize_orchestrator_decision(
+        self,
+        question: str,
+        decision: Any,
+        *,
+        has_image: bool = False,
+    ) -> dict:
         mode = str(_decision_value(decision, "mode", "simple") or "simple").lower()
         reason = str(_decision_value(decision, "reason", "") or "")
         raw_tasks = _decision_value(decision, "tasks", []) or []
@@ -169,6 +214,15 @@ class AssistantGraph:
                 "sub_results": [],
                 "current_subquestion_index": 0,
             }
+        try:
+            tasks = scope_task_images(tasks, has_image=has_image)
+            levels = build_task_levels(
+                tasks,
+                max_tasks=config.ORCHESTRATOR_MAX_TASKS,
+                max_depth=config.ORCHESTRATOR_MAX_DEPTH,
+            )
+        except PlanValidationError as exc:
+            return self._invalid_plan_state(question, reason, tasks, str(exc))
         return {
             "original_question": question,
             "orchestrator_mode": "complex",
@@ -176,9 +230,16 @@ class AssistantGraph:
             "sub_questions": tasks,
             "sub_results": [],
             "current_subquestion_index": 0,
+            "task_levels": levels,
         }
 
-    def _fallback_orchestrator_decision(self, question: str, reason: str) -> dict:
+    def _fallback_orchestrator_decision(
+        self,
+        question: str,
+        reason: str,
+        *,
+        has_image: bool = False,
+    ) -> dict:
         tasks = _heuristic_split_tasks(question)
         if len(tasks) < 2:
             return {
@@ -189,6 +250,12 @@ class AssistantGraph:
                 "sub_results": [],
                 "current_subquestion_index": 0,
             }
+        tasks = scope_task_images(tasks, has_image=has_image)
+        levels = build_task_levels(
+            tasks,
+            max_tasks=config.ORCHESTRATOR_MAX_TASKS,
+            max_depth=config.ORCHESTRATOR_MAX_DEPTH,
+        )
         return {
             "original_question": question,
             "orchestrator_mode": "complex",
@@ -196,72 +263,286 @@ class AssistantGraph:
             "sub_questions": tasks,
             "sub_results": [],
             "current_subquestion_index": 0,
+            "task_levels": levels,
+        }
+
+    @staticmethod
+    def _invalid_plan_state(
+        question: str,
+        reason: str,
+        tasks: list[dict[str, Any]],
+        error: str,
+    ) -> dict:
+        answer = "这个复合问题的任务依赖暂时无法安全执行，请换一种更明确的说法后再试。"
+        return {
+            "original_question": question,
+            "orchestrator_mode": "complex",
+            "orchestrator_reason": reason or "任务计划无效",
+            "orchestrator_plan_error": error,
+            "sub_questions": tasks,
+            "sub_results": [],
+            "task_levels": [],
+            "answer": answer,
+            "task_type": "orchestrator",
+            "product_cards": [],
+            "sources": [],
+            "tool_calls": [],
+            "route": "orchestrator",
+            "route_reason": reason or "任务计划无效",
+            "error": True,
+            "error_code": ErrorCode.ORCHESTRATOR_PLAN_INVALID,
+            "message": error,
+            "messages": [AIMessage(content=answer)],
         }
 
     def _after_analyze(self, state: AssistantState) -> str:
+        if state.get("orchestrator_plan_error"):
+            return "invalid"
         if state.get("orchestrator_mode") == "complex" and len(state.get("sub_questions") or []) >= 2:
             return "complex"
         return "simple"
 
-    def _prepare_subtask(self, state: AssistantState) -> dict:
-        tasks = state.get("sub_questions") or []
-        idx = int(state.get("current_subquestion_index") or 0)
-        if idx < 0 or idx >= len(tasks):
-            return {"orchestrator_mode": "simple"}
+    async def _execute_dag(self, state: AssistantState) -> dict:
+        """按拓扑层执行任务：同层并发、跨层等待、每个任务使用隔离状态。"""
+        try:
+            tasks = scope_task_images(
+                list(state.get("sub_questions") or []),
+                has_image=bool(state.get("image_url")),
+            )
+            levels = build_task_levels(
+                tasks,
+                max_tasks=config.ORCHESTRATOR_MAX_TASKS,
+                max_depth=config.ORCHESTRATOR_MAX_DEPTH,
+            )
+        except PlanValidationError as exc:
+            return {
+                "sub_questions": list(state.get("sub_questions") or []),
+                "sub_results": [],
+                "task_levels": [],
+                "orchestrator_plan_error": str(exc),
+            }
 
-        task = dict(tasks[idx])
-        question = str(task.get("question") or "").strip() or state.get("original_question") or ""
-        heading = _format_subtask_heading(idx, len(tasks), question)
+        task_by_id = {str(task["id"]): task for task in tasks}
+        result_by_id: dict[str, dict[str, Any]] = {}
+        semaphore = asyncio.Semaphore(max(1, config.ORCHESTRATOR_MAX_CONCURRENCY))
+        try:
+            base_memory = await get_business_memory(state.get("conversation_id"), state.get("user_id"))
+        except Exception:  # noqa: BLE001
+            logger.warning("orchestrator: 读取基础业务记忆失败，任务按空记忆执行", exc_info=True)
+            base_memory = {}
+
+        for level_index, task_ids in enumerate(levels):
+            level_results = await asyncio.gather(
+                *(
+                    self._execute_subtask(
+                        parent_state=state,
+                        task=task_by_id[task_id],
+                        level_index=level_index,
+                        result_by_id=result_by_id,
+                        base_memory=base_memory,
+                        semaphore=semaphore,
+                    )
+                    for task_id in task_ids
+                ),
+                return_exceptions=True,
+            )
+            for task_id, result in zip(task_ids, level_results):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "orchestrator: 子任务出现未捕获异常 task_id=%s: %s",
+                        task_id,
+                        result,
+                    )
+                    task = task_by_id[task_id]
+                    result_by_id[task_id] = self._failed_task_result(
+                        task,
+                        level_index=level_index,
+                        error_code=ErrorCode.ASSISTANT_ERROR,
+                        message=str(result),
+                    )
+                else:
+                    result_by_id[task_id] = result
+
+        ordered_results = [result_by_id[str(task["id"])] for task in tasks]
+        cards = _dedupe_product_cards(
+            card
+            for result in ordered_results
+            if result.get("status") == "success"
+            for card in (result.get("product_cards") or [])
+        )
+        if cards:
+            try:
+                await remember_product_cards(
+                    state.get("conversation_id"), state.get("user_id"), cards,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("orchestrator: 聚合商品卡片写入业务记忆失败", exc_info=True)
+
         return {
-            "question": question,
+            "sub_questions": tasks,
+            "sub_results": ordered_results,
+            "task_levels": levels,
+        }
+
+    async def _execute_subtask(
+        self,
+        *,
+        parent_state: AssistantState,
+        task: dict[str, Any],
+        level_index: int,
+        result_by_id: dict[str, dict[str, Any]],
+        base_memory: dict[str, Any],
+        semaphore: asyncio.Semaphore,
+    ) -> dict[str, Any]:
+        dependencies = [result_by_id[dep_id] for dep_id in (task.get("depends_on") or [])]
+        failed_dependencies = [
+            result for result in dependencies if result.get("status") != "success"
+        ]
+        if failed_dependencies:
+            failed_ids = [str(result.get("id")) for result in failed_dependencies]
+            return self._failed_task_result(
+                task,
+                level_index=level_index,
+                status="blocked",
+                error_code=ErrorCode.ORCHESTRATOR_DEPENDENCY_FAILED,
+                message="前置任务未成功: " + ", ".join(failed_ids),
+                dependency_ids=[str(result.get("id")) for result in dependencies],
+            )
+
+        payloads = [dependency_payload(result) for result in dependencies]
+        task_messages = list(parent_state.get("messages") or [])
+        if payloads:
+            task_messages.append(SystemMessage(content=format_dependency_message(payloads)))
+        task_messages.append(HumanMessage(content=str(task.get("question") or "")))
+
+        task_memory = dependency_business_memory(base_memory, payloads)
+        task_state: AssistantState = {
+            "question": str(task.get("question") or ""),
+            "original_question": parent_state.get("original_question") or parent_state.get("question") or "",
+            "conversation_id": parent_state.get("conversation_id"),
+            "user_id": parent_state.get("user_id"),
+            "jwt_token": parent_state.get("jwt_token"),
+            "run_id": parent_state.get("run_id"),
+            "trace_id": parent_state.get("trace_id"),
+            "messages": task_messages,
             "active_subtask": task,
-            "answer": "",
-            "task_type": None,
+            "dependency_context": payloads,
+            "business_memory": task_memory,
+            "orchestrator_mode": "complex",
+            "error": False,
+        }
+        if task.get("use_image") and parent_state.get("image_url"):
+            task_state["image_url"] = parent_state["image_url"]
+
+        started = time.perf_counter()
+        try:
+            async with semaphore:
+                result = await asyncio.wait_for(
+                    self._run_business_task(task_state),
+                    timeout=max(0.01, config.ORCHESTRATOR_TASK_TIMEOUT_SECONDS),
+                )
+        except asyncio.TimeoutError:
+            return self._failed_task_result(
+                task,
+                level_index=level_index,
+                status="timeout",
+                error_code=ErrorCode.ORCHESTRATOR_TASK_TIMEOUT,
+                message=f"子任务执行超过 {config.ORCHESTRATOR_TASK_TIMEOUT_SECONDS:g} 秒",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                dependency_ids=[str(result.get("id")) for result in dependencies],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("orchestrator: 子任务执行失败 task_id=%s", task.get("id"))
+            return self._failed_task_result(
+                task,
+                level_index=level_index,
+                error_code=ErrorCode.ASSISTANT_ERROR,
+                message=str(exc),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                dependency_ids=[str(result.get("id")) for result in dependencies],
+            )
+
+        has_error = bool(result.get("error"))
+        return {
+            "id": task.get("id"),
+            "question": task.get("question") or "",
+            "intent_hint": task.get("intent_hint"),
+            "depends_on": task.get("depends_on") or [],
+            "use_image": bool(task.get("use_image")),
+            "level": level_index,
+            "status": "failed" if has_error else "success",
+            "dependency_ids": [str(dep.get("id")) for dep in dependencies],
+            "route": result.get("route"),
+            "route_reason": result.get("route_reason"),
+            "task_type": result.get("task_type") or result.get("route") or "unknown",
+            "answer": result.get("answer", ""),
+            "product_cards": result.get("product_cards", []),
+            "sources": result.get("sources", []),
+            "tool_calls": result.get("tool_calls", []),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "error": has_error,
+            "error_code": result.get("error_code"),
+            "message": result.get("message"),
+        }
+
+    async def _run_business_task(self, task_state: AssistantState) -> dict[str, Any]:
+        route_result = await self._route(task_state)
+        route = str(route_result.get("route") or "unknown")
+        node_key = f"{route}_node"
+        if node_key not in self._nodes:
+            route = "unknown"
+            node_key = "unknown_node"
+        node_result = await self._nodes[node_key](
+            {**task_state, **route_result, "route": route},
+        )
+        return {**node_result, **route_result, "route": route}
+
+    @staticmethod
+    def _failed_task_result(
+        task: dict[str, Any],
+        *,
+        level_index: int,
+        error_code: str,
+        message: str,
+        status: str = "failed",
+        duration_ms: int = 0,
+        dependency_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        answer = (
+            "这一部分依赖的前置任务没有成功，暂时无法继续。"
+            if status == "blocked"
+            else "这一部分暂时处理失败，请稍后再试。"
+        )
+        return {
+            "id": task.get("id"),
+            "question": task.get("question") or "",
+            "intent_hint": task.get("intent_hint"),
+            "depends_on": task.get("depends_on") or [],
+            "use_image": bool(task.get("use_image")),
+            "level": level_index,
+            "status": status,
+            "dependency_ids": dependency_ids or [],
+            "route": task.get("intent_hint") or "unknown",
+            "route_reason": message,
+            "task_type": task.get("intent_hint") or "unknown",
+            "answer": answer,
             "product_cards": [],
             "sources": [],
             "tool_calls": [],
-            "error": False,
-            "error_code": None,
-            "message": None,
-            "subtask_heading": heading,
-            "messages": [HumanMessage(content=question)],
+            "duration_ms": duration_ms,
+            "error": True,
+            "error_code": error_code,
+            "message": message,
         }
-
-    def _after_business_node(self, state: AssistantState) -> str:
-        return "complex" if state.get("orchestrator_mode") == "complex" else "simple"
-
-    def _collect_subtask(self, state: AssistantState) -> dict:
-        task = dict(state.get("active_subtask") or {})
-        idx = int(state.get("current_subquestion_index") or 0)
-        result = {
-            "id": task.get("id") or f"t{idx + 1}",
-            "question": task.get("question") or state.get("question") or "",
-            "intent_hint": task.get("intent_hint"),
-            "depends_on": task.get("depends_on") or [],
-            "route": state.get("route"),
-            "route_reason": state.get("route_reason"),
-            "task_type": state.get("task_type") or state.get("route") or "unknown",
-            "answer": state.get("answer", ""),
-            "product_cards": state.get("product_cards", []),
-            "sources": state.get("sources", []),
-            "tool_calls": state.get("tool_calls", []),
-            "error": bool(state.get("error", False)),
-            "error_code": state.get("error_code"),
-            "message": state.get("message"),
-        }
-        results = list(state.get("sub_results") or [])
-        results.append(result)
-        return {
-            "sub_results": results,
-            "current_subquestion_index": idx + 1,
-        }
-
-    def _after_collect(self, state: AssistantState) -> str:
-        idx = int(state.get("current_subquestion_index") or 0)
-        total = len(state.get("sub_questions") or [])
-        return "next" if idx < total else "done"
 
     def _synthesize_final(self, state: AssistantState) -> dict:
+        if state.get("orchestrator_plan_error"):
+            return self._invalid_plan_state(
+                state.get("original_question") or state.get("question") or "",
+                state.get("orchestrator_reason") or "任务计划无效",
+                list(state.get("sub_questions") or []),
+                str(state.get("orchestrator_plan_error")),
+            )
         sub_results = state.get("sub_results") or []
         answer = _build_orchestrator_answer(sub_results)
         product_cards = _dedupe_product_cards(
@@ -297,13 +578,29 @@ class AssistantGraph:
     async def _route(self, state: AssistantState) -> dict:
         question = (state.get("question") or "").strip()
 
+        active_task = state.get("active_subtask") or {}
+        if active_task:
+            intent_hint = str(active_task.get("intent_hint") or "unknown")
+            use_image = bool(active_task.get("use_image"))
+            image_url = (state.get("image_url") or "").strip()
+            if use_image and image_url:
+                return {
+                    "route": "shopping",
+                    "route_reason": "任务 use_image=true → shopping 多模态分支",
+                }
+            if intent_hint in {"shopping", "knowledge", "chitchat"}:
+                return {
+                    "route": intent_hint,
+                    "route_reason": f"Orchestrator 任务级路由: intent_hint={intent_hint}",
+                }
+
         # 多模态短路：有图直接判 shopping。文本 LLM 看不到图，让 router 分类
         # 无意义；用户传图基本都是"找同款/找相似"，走 shopping 分支即可。
         # 注意：多模态场景 question 可以为空（纯图搜索），必须在空 question 检查之前判断。
         # Orchestrator 若已拆解子任务，也允许当前子任务的 intent_hint 是 knowledge
         # 等——只有拿到 image_url 且原始 question 是当前问题时才强制 shopping。
         image_url = (state.get("image_url") or "").strip()
-        if image_url and state.get("question") == state.get("active_subtask", {}).get("question", state.get("question")):
+        if image_url and not active_task:
             return {"route": "shopping", "route_reason": "带图请求 → 强制 shopping 多模态分支"}
 
         if not question:
@@ -362,13 +659,28 @@ class AssistantGraph:
             "conversation_id": kwargs.get("conversation_id"),
             "user_id": kwargs.get("user_id"),
             "jwt_token": kwargs.get("jwt_token"),
+            # 每轮都显式覆盖，避免 checkpointer 把上一轮图片/子任务带到本轮。
+            "image_url": image_url or "",
+            "active_subtask": {},
+            "dependency_context": [],
+            "orchestrator_plan_error": "",
+            "task_levels": [],
+            "sub_questions": [],
+            "sub_results": [],
+            "route": "",
+            "route_reason": "",
+            "answer": "",
+            "task_type": "",
+            "product_cards": [],
+            "sources": [],
+            "tool_calls": [],
             "run_id": run_id,
             "trace_id": trace_id,
             "messages": [HumanMessage(content=human_content)],
             "error": False,
+            "error_code": None,
+            "message": None,
         }
-        if image_url:
-            state["image_url"] = image_url
         return state, run_id, trace_id
 
     async def run(self, **kwargs) -> dict:
@@ -500,13 +812,12 @@ class AssistantGraph:
         # stream 再发一次；这个片段不是 LLM 增量，而是节点回写的完整答案，必须过滤。
         main_nodes = {
             "analyze_request",
-            "prepare_subtask",
             "route_intent",
             "shopping",
             "knowledge",
             "chitchat",
             "unknown",
-            "collect_subtask",
+            "execute_dag",
             "synthesize_final",
             "format_response",
         }
@@ -554,6 +865,29 @@ class AssistantGraph:
                 "data": {"content": node_output.get("subtask_heading")},
             }
 
+        if node_name == "execute_dag" and node_output.get("sub_results"):
+            sub_results = node_output.get("sub_results") or []
+            for result in sub_results:
+                yield {
+                    "type": "orchestrator_subtask",
+                    "data": {
+                        "task": {
+                            "id": result.get("id"),
+                            "question": result.get("question"),
+                            "depends_on": result.get("depends_on") or [],
+                            "use_image": bool(result.get("use_image")),
+                        },
+                        "status": result.get("status"),
+                        "route": result.get("route"),
+                        "duration_ms": result.get("duration_ms"),
+                        "error_code": result.get("error_code"),
+                    },
+                }
+            yield {
+                "type": "token",
+                "data": {"content": _build_orchestrator_answer(sub_results)},
+            }
+
         # 2. 子节点消息里可能含 ToolMessage（工具返回）—— 用于 tool_result
         # 主图节点自己不会直接调工具，工具都在子图（ShoppingAgent 等）内部。
         # subgraphs=True 时子图消息会在 messages 流里冒泡，这里 updates 流一般看不到。
@@ -582,8 +916,7 @@ def _build_structured_llm(llm: Any, schema: Any, *, preferred_method: str):
 
 def _normalize_tasks(raw_tasks: list) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for index, item in enumerate(raw_tasks[:5], start=1):
+    for index, item in enumerate(raw_tasks, start=1):
         if hasattr(item, "model_dump"):
             data = item.model_dump()
         elif hasattr(item, "dict"):
@@ -594,29 +927,21 @@ def _normalize_tasks(raw_tasks: list) -> list[dict[str, Any]]:
             continue
 
         question = str(data.get("question") or "").strip()
-        if not question:
-            continue
-
         task_id = str(data.get("id") or f"t{index}").strip() or f"t{index}"
-        if task_id in seen_ids:
-            task_id = f"t{index}"
-        seen_ids.add(task_id)
-
         depends_on = data.get("depends_on") or []
-        if not isinstance(depends_on, list):
-            depends_on = []
 
         tasks.append({
             "id": task_id,
             "question": question,
             "intent_hint": data.get("intent_hint"),
-            "depends_on": [str(v) for v in depends_on if str(v).strip()],
+            "depends_on": (
+                [str(v).strip() for v in depends_on]
+                if isinstance(depends_on, list)
+                else depends_on
+            ),
+            "use_image": data.get("use_image"),
             "reason": str(data.get("reason") or ""),
         })
-
-    valid_ids = {t["id"] for t in tasks}
-    for task in tasks:
-        task["depends_on"] = [dep for dep in task["depends_on"] if dep in valid_ids and dep != task["id"]]
     return tasks
 
 
@@ -647,6 +972,7 @@ def _heuristic_split_tasks(question: str) -> list[dict[str, Any]]:
             "question": part,
             "intent_hint": _guess_intent_hint(part),
             "depends_on": depends_on,
+            "use_image": None,
             "reason": "启发式拆分",
         })
     return tasks

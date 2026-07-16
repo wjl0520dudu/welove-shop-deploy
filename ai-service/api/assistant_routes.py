@@ -94,7 +94,8 @@ def _sse_frame(event_type: str, data: dict) -> str:
 async def stream_assistant(request: AssistantRunRequest, http_request: Request):
     """流式版本 /run，返回 SSE 事件流。
 
-    事件类型：start / route / token / tool_call / tool_result / final / error / done。
+    事件类型：start / route / orchestrator_plan / orchestrator_subtask /
+    token / tool_call / tool_result / final / error / done。
     详见 assistant/graph.py::astream。
 
     客户端断开检测：每次 yield 前用 Starlette 自带的 `request.is_disconnected()`
@@ -167,9 +168,9 @@ async def stream_assistant(request: AssistantRunRequest, http_request: Request):
 # 相较文本接口的唯一差异：request 里可带 image_url（单张 OSS 图片 URL）。
 # - 有 image_url + shopping 意图 → shopping_node 走 search_multimodal_v1
 #   （三路 + qwen3-vl-rerank）
-# - 有 image_url + 非 shopping 意图（少见，如"这张图里的成分能给我讲讲吗"）→
-#   路由目前会因 image_url 短路为 shopping；后续如果要走 knowledge 需要
-#   多模态问答模型，目前不支持
+# - 复合请求由 Orchestrator 把图片收敛到 use_image=true 的 shopping 子任务；
+#   knowledge/chitchat 子任务不会继承全局图片。知识任务如需图片检索产物，
+#   通过 depends_on 接收前置 shopping 的结构化商品结果。
 # - 无 image_url → 完全等价于 /run 或 /stream，走原文本链路
 
 class MultimodalAssistantRunRequest(AssistantRunRequest):

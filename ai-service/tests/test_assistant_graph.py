@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from agents.schemas import IntentDecision, OrchestratorDecision
 from agents.memory import remember_product_cards, get_business_memory
 from assistant.graph import AssistantGraph, _heuristic_split_tasks
+from assistant.orchestration import PlanValidationError, build_task_levels
 
 
 def clear_business_memory():
@@ -130,6 +131,7 @@ def _patch_complex_orchestrator(monkeypatch):
                     "question": "给我推荐适合油皮的防晒",
                     "intent_hint": "shopping",
                     "depends_on": [],
+                    "use_image": False,
                     "reason": "推荐商品",
                 },
                 {
@@ -137,6 +139,7 @@ def _patch_complex_orchestrator(monkeypatch):
                     "question": "烟酰胺是什么成分？",
                     "intent_hint": "knowledge",
                     "depends_on": [],
+                    "use_image": False,
                     "reason": "知识查询",
                 },
                 {
@@ -144,6 +147,7 @@ def _patch_complex_orchestrator(monkeypatch):
                     "question": "你推荐的这些商品价格对比如何？",
                     "intent_hint": "shopping",
                     "depends_on": ["t1"],
+                    "use_image": False,
                     "reason": "依赖推荐结果做对比",
                 },
             ],
@@ -305,7 +309,10 @@ def test_orchestrator_executes_complex_tasks_in_order(monkeypatch):
         ]
         assert knowledge.calls[0]["question"] == "烟酰胺是什么成分？"
         assert len(result["sub_results"]) == 3
+        assert result["task_levels"] == [["t1", "t2"], ["t3"]]
+        assert [item["status"] for item in result["sub_results"]] == ["success", "success", "success"]
         assert result["sub_questions"][2]["depends_on"] == ["t1"]
+        assert shopping.calls[1]["business_memory"]["last_product_cards"][0]["product_id"] == 7
         assert result["product_cards"][0]["product_id"] == 7
         assert result["sources"][0]["doc_name"] == "成分手册"
         assert "1. 给我推荐适合油皮的防晒" in result["answer"]
@@ -332,6 +339,266 @@ def test_orchestrator_prepare_subtask_stream_heading():
             "type": "token",
             "data": {"content": "我会分成几个部分依次回答：\n\n1. 给我推荐防晒\n"},
         }
+    asyncio.run(run())
+
+
+def test_initial_state_clears_previous_task_and_image_scope():
+    graph = AssistantGraph.__new__(AssistantGraph)
+    first, _, _ = graph._make_initial_state(question="找同款", image_url="/a.jpg")
+    second, _, _ = graph._make_initial_state(question="只问知识")
+    assert first["image_url"] == "/a.jpg"
+    assert second["image_url"] == ""
+    assert second["active_subtask"] == {}
+    assert second["orchestrator_plan_error"] == ""
+
+
+def test_orchestrator_execute_dag_streams_ordered_results():
+    async def run():
+        graph = AssistantGraph.__new__(AssistantGraph)
+        sub_results = [
+            {"id": "t1", "question": "问题一", "status": "success", "route": "shopping", "answer": "答案一"},
+            {"id": "t2", "question": "问题二", "status": "success", "route": "knowledge", "answer": "答案二"},
+        ]
+        events = []
+        async for event in graph._translate_update_event("execute_dag", {"sub_results": sub_results}):
+            events.append(event)
+
+        assert [event["type"] for event in events] == [
+            "orchestrator_subtask", "orchestrator_subtask", "token",
+        ]
+        assert "1. 问题一" in events[-1]["data"]["content"]
+        assert "2. 问题二" in events[-1]["data"]["content"]
+    asyncio.run(run())
+
+
+def test_build_task_levels_rejects_duplicate_illegal_and_cycle():
+    duplicate = [
+        {"id": "t1", "question": "a", "depends_on": []},
+        {"id": "t1", "question": "b", "depends_on": []},
+    ]
+    try:
+        build_task_levels(duplicate)
+        assert False, "duplicate task ids must be rejected"
+    except PlanValidationError as exc:
+        assert "重复任务 ID" in str(exc)
+
+    illegal = [
+        {"id": "t1", "question": "a", "depends_on": []},
+        {"id": "t2", "question": "b", "depends_on": ["missing"]},
+    ]
+    try:
+        build_task_levels(illegal)
+        assert False, "missing dependency must be rejected"
+    except PlanValidationError as exc:
+        assert "依赖不存在" in str(exc)
+
+    cyclic = [
+        {"id": "t1", "question": "a", "depends_on": ["t2"]},
+        {"id": "t2", "question": "b", "depends_on": ["t1"]},
+    ]
+    try:
+        build_task_levels(cyclic)
+        assert False, "cyclic dependency must be rejected"
+    except PlanValidationError as exc:
+        assert "循环" in str(exc)
+
+    too_many = [
+        {"id": f"t{i}", "question": str(i), "depends_on": []}
+        for i in range(1, 7)
+    ]
+    try:
+        build_task_levels(too_many, max_tasks=5)
+        assert False, "task count limit must be enforced"
+    except PlanValidationError as exc:
+        assert "超过上限" in str(exc)
+
+    too_deep = [
+        {"id": "t1", "question": "1", "depends_on": []},
+        {"id": "t2", "question": "2", "depends_on": ["t1"]},
+        {"id": "t3", "question": "3", "depends_on": ["t2"]},
+    ]
+    try:
+        build_task_levels(too_deep, max_depth=2)
+        assert False, "dependency depth limit must be enforced"
+    except PlanValidationError as exc:
+        assert "依赖深度" in str(exc)
+
+
+def test_orchestrator_runs_same_level_tasks_concurrently(monkeypatch):
+    async def run():
+        started = 0
+        both_started = asyncio.Event()
+
+        async def wait_for_peer():
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=0.5)
+
+        class BarrierShopping(FakeShoppingAgent):
+            async def run(self, **kwargs):
+                await wait_for_peer()
+                return await super().run(**kwargs)
+
+        class BarrierKnowledge(FakeKnowledgeAgent):
+            async def run(self, **kwargs):
+                await wait_for_peer()
+                return await super().run(**kwargs)
+
+        async def fake_analyze(self, state):
+            return {
+                "original_question": state.get("question", ""),
+                "orchestrator_mode": "complex",
+                "orchestrator_reason": "parallel test",
+                "sub_questions": [
+                    {"id": "t1", "question": "推荐防晒", "intent_hint": "shopping", "depends_on": [], "use_image": False},
+                    {"id": "t2", "question": "烟酰胺是什么", "intent_hint": "knowledge", "depends_on": [], "use_image": False},
+                ],
+                "sub_results": [],
+            }
+
+        monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+        graph = AssistantGraph(
+            llm=_dummy_llm(),
+            shopping_agent=BarrierShopping(),
+            knowledge_agent=BarrierKnowledge(),
+        )
+        result = await asyncio.wait_for(graph.run(question="两个独立问题", conversation_id="c-par"), timeout=1)
+        assert result["task_levels"] == [["t1", "t2"]]
+        assert all(item["status"] == "success" for item in result["sub_results"])
+    asyncio.run(run())
+
+
+def test_orchestrator_failure_isolated_and_dependency_blocked(monkeypatch):
+    async def run():
+        calls = 0
+
+        class BoomShopping:
+            async def run(self, **kwargs):
+                nonlocal calls
+                calls += 1
+                raise RuntimeError("shopping boom")
+
+        async def fake_analyze(self, state):
+            return {
+                "original_question": state.get("question", ""),
+                "orchestrator_mode": "complex",
+                "orchestrator_reason": "failure test",
+                "sub_questions": [
+                    {"id": "t1", "question": "推荐商品", "intent_hint": "shopping", "depends_on": [], "use_image": False},
+                    {"id": "t2", "question": "解释烟酰胺", "intent_hint": "knowledge", "depends_on": [], "use_image": False},
+                    {"id": "t3", "question": "比较这些商品", "intent_hint": "shopping", "depends_on": ["t1"], "use_image": False},
+                ],
+                "sub_results": [],
+            }
+
+        monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+        graph = AssistantGraph(
+            llm=_dummy_llm(), shopping_agent=BoomShopping(), knowledge_agent=FakeKnowledgeAgent(),
+        )
+        result = await graph.run(question="复合问题", conversation_id="c-failure")
+        by_id = {item["id"]: item for item in result["sub_results"]}
+        assert by_id["t1"]["status"] == "failed"
+        assert by_id["t2"]["status"] == "success"
+        assert by_id["t3"]["status"] == "blocked"
+        assert by_id["t3"]["error_code"] == "AI_ORCHESTRATOR_DEPENDENCY_FAILED"
+        assert calls == 1
+        assert result["error"] is True
+        assert result["error_code"] == "AI_ORCHESTRATOR_PARTIAL_ERROR"
+    asyncio.run(run())
+
+
+def test_orchestrator_task_timeout_does_not_drop_independent_result(monkeypatch):
+    async def run():
+        class SlowShopping:
+            async def run(self, **kwargs):
+                await asyncio.sleep(0.2)
+                return {"answer": "late", "task_type": "shopping", "error": False}
+
+        async def fake_analyze(self, state):
+            return {
+                "original_question": state.get("question", ""),
+                "orchestrator_mode": "complex",
+                "orchestrator_reason": "timeout test",
+                "sub_questions": [
+                    {"id": "t1", "question": "慢推荐", "intent_hint": "shopping", "depends_on": [], "use_image": False},
+                    {"id": "t2", "question": "解释烟酰胺", "intent_hint": "knowledge", "depends_on": [], "use_image": False},
+                ],
+                "sub_results": [],
+            }
+
+        monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+        monkeypatch.setattr("assistant.graph.config.ORCHESTRATOR_TASK_TIMEOUT_SECONDS", 0.03)
+        graph = AssistantGraph(
+            llm=_dummy_llm(), shopping_agent=SlowShopping(), knowledge_agent=FakeKnowledgeAgent(),
+        )
+        result = await graph.run(question="超时隔离", conversation_id="c-timeout")
+        by_id = {item["id"]: item for item in result["sub_results"]}
+        assert by_id["t1"]["status"] == "timeout"
+        assert by_id["t1"]["error_code"] == "AI_ORCHESTRATOR_TASK_TIMEOUT"
+        assert by_id["t2"]["status"] == "success"
+    asyncio.run(run())
+
+
+def test_invalid_orchestrator_plan_returns_stable_error():
+    graph = AssistantGraph.__new__(AssistantGraph)
+    decision = {
+        "mode": "complex",
+        "reason": "bad plan",
+        "tasks": [
+            {"id": "t1", "question": "a", "intent_hint": "shopping", "depends_on": ["t2"]},
+            {"id": "t2", "question": "b", "intent_hint": "knowledge", "depends_on": ["t1"]},
+        ],
+    }
+    result = graph._normalize_orchestrator_decision("test", decision)
+    assert result["error"] is True
+    assert result["error_code"] == "AI_ORCHESTRATOR_PLAN_INVALID"
+    assert "循环" in result["message"]
+
+
+def test_complex_image_is_scoped_to_shopping_task(monkeypatch):
+    async def run():
+        multimodal_calls = []
+
+        async def fake_multimodal(*, llm, query_text, image_url, top_k):
+            multimodal_calls.append({"query_text": query_text, "image_url": image_url})
+            return {
+                "answer": "找到图片中的同类商品。",
+                "task_type": "shopping",
+                "product_cards": [{"product_id": 88, "title": "方便面"}],
+                "sources": [],
+                "tool_calls": [],
+                "error": False,
+            }
+
+        async def fake_analyze(self, state):
+            return {
+                "original_question": state.get("question", ""),
+                "orchestrator_mode": "complex",
+                "orchestrator_reason": "image scope test",
+                "sub_questions": [
+                    {"id": "t1", "question": "找同类商品", "intent_hint": "shopping", "depends_on": [], "use_image": True},
+                    {"id": "t2", "question": "方便面适合减脂期吗", "intent_hint": "knowledge", "depends_on": [], "use_image": False},
+                ],
+                "sub_results": [],
+            }
+
+        monkeypatch.setattr("assistant.graph.AssistantGraph._analyze_request", fake_analyze)
+        monkeypatch.setattr("assistant.nodes._multimodal_shopping", fake_multimodal)
+        knowledge = FakeKnowledgeAgent()
+        graph = AssistantGraph(
+            llm=_dummy_llm(), shopping_agent=FakeShoppingAgent(), knowledge_agent=knowledge,
+        )
+        result = await graph.run(
+            question="按图片找商品，并解释是否适合减脂",
+            image_url="/weloveshop/uploads/noodle.jpg",
+            conversation_id="c-image-dag",
+        )
+        assert len(multimodal_calls) == 1
+        assert knowledge.calls[0]["question"] == "方便面适合减脂期吗"
+        assert [item["route"] for item in result["sub_results"]] == ["shopping", "knowledge"]
+        assert [item["use_image"] for item in result["sub_results"]] == [True, False]
     asyncio.run(run())
 
 

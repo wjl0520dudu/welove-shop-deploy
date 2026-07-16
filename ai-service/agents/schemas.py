@@ -29,6 +29,10 @@ class OrchestratorTask(BaseModel):
         default_factory=list,
         description="该子任务依赖的前置子任务 ID；例如价格对比依赖推荐结果",
     )
+    use_image: Optional[bool] = Field(
+        None,
+        description="是否允许该子任务使用本轮上传图片；仅图片相关 shopping 子任务可为 true",
+    )
     reason: str = Field("", description="为什么拆出这个子任务")
 
 

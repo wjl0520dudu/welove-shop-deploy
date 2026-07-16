@@ -176,6 +176,7 @@ class AIResponse(FlexibleModel):
     orchestrator_reason: Optional[str] = Field(None, description="Orchestrator planning reason")
     sub_questions: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestrator sub tasks")
     sub_results: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestrator sub task results")
+    task_levels: List[List[str]] = Field(default_factory=list, description="Topological task execution levels")
 
 
 class StreamEvent(FlexibleModel):
