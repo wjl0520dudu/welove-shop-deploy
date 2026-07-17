@@ -249,14 +249,25 @@ def _extract_tool_calls(messages: list) -> List[Dict[str, Any]]:
             continue
         for tc in tcs:
             if isinstance(tc, dict):
+                call_id = tc.get("id")
                 name = tc.get("name") or ""
                 args = tc.get("args") or tc.get("arguments") or {}
             else:
+                call_id = getattr(tc, "id", None)
                 name = getattr(tc, "name", "") or ""
                 args = getattr(tc, "args", None) or getattr(tc, "arguments", None) or {}
             if not name:
                 continue
-            out.append({"name": name, "args": args})
+            normalized_args = args if isinstance(args, dict) else {}
+            out.append({
+                "tool_call_id": call_id,
+                "tool_name": name,
+                "input_params": normalized_args,
+                "status": "invoked",
+                # Backward-compatible aliases used by existing scripts/tests.
+                "name": name,
+                "args": normalized_args,
+            })
     return out
 
 

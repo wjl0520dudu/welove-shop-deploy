@@ -1,0 +1,5 @@
+# Optional, offline-only LLM evaluation dependencies. The production service
+# continues to install from requirements.txt and does not need these packages.
+deepeval>=4.0.0
+ragas>=0.4.0
+openai>=1.0.0

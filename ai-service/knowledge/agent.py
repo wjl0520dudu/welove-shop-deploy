@@ -70,7 +70,16 @@ async def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: 
     plan = RetrievalPlan(query=query, top_k=5, search_mode=mode, use_rerank=bool(use_rerank))
     output = get_retriever().retrieve(plan)
 
-    sources = [{"title": s.doc, "score": round(s.score, 3)} for s in output.sources]
+    sources = [
+        {
+            "doc_id": s.doc_id,
+            "chunk_id": s.chunk_id,
+            "chunk_index": s.chunk_index,
+            "title": s.doc,
+            "score": round(s.score, 3),
+        }
+        for s in output.sources
+    ]
     knowledge_context = output.knowledge_context
     fallback_used = False
 
@@ -193,6 +202,9 @@ def _extract_sources(messages: list) -> list:
                 continue
             src_type = s.get("source") or ("bocha" if is_web_result else "milvus")
             item = {
+                "doc_id": s.get("doc_id"),
+                "chunk_id": s.get("chunk_id"),
+                "chunk_index": s.get("chunk_index"),
                 "title": s.get("title"),
                 "score": s.get("score", 0),
                 "source": src_type,
@@ -201,6 +213,67 @@ def _extract_sources(messages: list) -> list:
                 item["url"] = s["url"]
             sources.append(item)
     return sources
+
+
+def _extract_tool_calls(messages: list) -> list[dict[str, Any]]:
+    """Build a stable, bounded tool trace from Agent AI/Tool messages."""
+    calls: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for message in messages or []:
+        if getattr(message, "type", "") == "ai":
+            for raw in getattr(message, "tool_calls", None) or []:
+                if isinstance(raw, dict):
+                    call_id = str(raw.get("id") or "")
+                    name = str(raw.get("name") or "")
+                    args = raw.get("args") or {}
+                else:
+                    call_id = str(getattr(raw, "id", "") or "")
+                    name = str(getattr(raw, "name", "") or "")
+                    args = getattr(raw, "args", {}) or {}
+                item = {
+                    "tool_call_id": call_id or None,
+                    "tool_name": name,
+                    "input_params": args if isinstance(args, dict) else {},
+                    "output": {},
+                    "status": "started",
+                }
+                calls.append(item)
+                if call_id:
+                    by_id[call_id] = item
+            continue
+
+        if getattr(message, "type", "") != "tool":
+            continue
+        call_id = str(getattr(message, "tool_call_id", "") or "")
+        item = by_id.get(call_id)
+        if item is None:
+            item = {
+                "tool_call_id": call_id or None,
+                "tool_name": str(getattr(message, "name", "") or ""),
+                "input_params": {},
+                "output": {},
+                "status": "started",
+            }
+            calls.append(item)
+            if call_id:
+                by_id[call_id] = item
+        payload: dict[str, Any] = {}
+        content = getattr(message, "content", "")
+        if isinstance(content, str) and content:
+            try:
+                parsed = json.loads(content)
+                payload = parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                payload = {}
+        # Keep trace useful without duplicating raw RAG contexts into reports.
+        item["output"] = {
+            key: payload.get(key)
+            for key in ("total_results", "search_mode", "use_rerank", "fallback_used", "success", "channel")
+            if key in payload
+        }
+        status = str(getattr(message, "status", "") or "").lower()
+        item["status"] = "failed" if status in {"error", "failed"} else "completed"
+    return calls
 
 
 def _extract_last_knowledge_context(messages: list) -> str:
@@ -621,6 +694,7 @@ class KnowledgeAgent:
                     answer = content
                     break
         sources = _extract_sources(result_messages)
+        tool_calls = _extract_tool_calls(result_messages)
 
         # ── 生成后自评（反幻觉最后一道关）──
         # 让 LLM 自己判断答案是否完全来自参考资料。判为 false 时改写为兜底文案。
@@ -646,6 +720,11 @@ class KnowledgeAgent:
         output = {
             "answer": answer or "知识检索暂时不可用，请稍后再试。",
             "sources": sources,
+            # Only retained by the in-process graph result for offline RAGAS.
+            # API response adaptation deliberately does not expose raw chunks to
+            # H5/Java callers, preventing a much larger user-facing payload.
+            "retrieved_contexts": self._split_evaluation_contexts(grounding_context) if sources else [],
+            "tool_calls": tool_calls,
             "confidence": 0.7 if sources else 0.3,
             "has_answer": bool(sources) and grounded,
             "task_type": "knowledge",
@@ -656,6 +735,16 @@ class KnowledgeAgent:
             _knowledge_cache[cache_key] = output
 
         return output
+
+    @staticmethod
+    def _split_evaluation_contexts(knowledge_context: str) -> list[str]:
+        """Keep bounded retrieval chunks for offline quality evaluation only.
+
+        The retriever currently formats chunks with blank lines. A bounded split
+        keeps per-case RAGAS input stable without leaking the complete context
+        into public API responses.
+        """
+        return [part.strip()[:4000] for part in (knowledge_context or "").split("\n\n") if part.strip()][:10]
 
     async def _persist_entities(
         self,

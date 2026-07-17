@@ -47,6 +47,9 @@ class AssistantState(TypedDict):
     task_type: NotRequired[str]
     product_cards: NotRequired[list[dict[str, Any]]]
     sources: NotRequired[list[dict[str, Any]]]
+    # Raw chunks are retained only by the in-process result for offline RAGAS.
+    # ``api.response_adapter`` intentionally does not expose them to clients.
+    retrieved_contexts: NotRequired[list[str]]
     tool_calls: NotRequired[list[dict[str, Any]]]
     suggested_questions: NotRequired[list[str]]
 

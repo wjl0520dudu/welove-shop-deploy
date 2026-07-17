@@ -303,6 +303,7 @@ class AssistantGraph:
             "task_type": "orchestrator",
             "product_cards": [],
             "sources": [],
+            "retrieved_contexts": [],
             "tool_calls": [],
             "route": "orchestrator",
             "route_reason": reason or "任务计划无效",
@@ -504,6 +505,7 @@ class AssistantGraph:
             "answer": result.get("answer", ""),
             "product_cards": result.get("product_cards", []),
             "sources": result.get("sources", []),
+            "retrieved_contexts": result.get("retrieved_contexts", []),
             "tool_calls": result.get("tool_calls", []),
             "suggested_questions": result.get("suggested_questions", []),
             "duration_ms": int((time.perf_counter() - started) * 1000),
@@ -582,6 +584,12 @@ class AssistantGraph:
             for result in sub_results
             for source in (result.get("sources") or [])
         )
+        retrieved_contexts = list(dict.fromkeys(
+            str(context)
+            for result in sub_results
+            for context in (result.get("retrieved_contexts") or [])
+            if str(context).strip()
+        ))[:10]
         tool_calls = [
             call
             for result in sub_results
@@ -599,6 +607,7 @@ class AssistantGraph:
             "task_type": "orchestrator",
             "product_cards": product_cards,
             "sources": sources,
+            "retrieved_contexts": retrieved_contexts,
             "tool_calls": tool_calls,
             "suggested_questions": suggested_questions,
             "route": "orchestrator",
@@ -832,6 +841,7 @@ class AssistantGraph:
             "task_type": "",
             "product_cards": [],
             "sources": [],
+            "retrieved_contexts": [],
             "tool_calls": [],
             "suggested_questions": [],
             "run_id": run_id,

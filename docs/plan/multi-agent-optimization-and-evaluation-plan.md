@@ -755,6 +755,18 @@ LLM 的角色建议是“偏好解析器”，而不是每次全量商品 LLM Ju
 
 ## Phase 4：建立低成本 Agent 评测闭环
 
+### 当前实现（2026-07-16）
+
+- 新增 32 条分层 Golden Dataset（Shopping、Knowledge RAG、图文商品、多 Agent DAG）；
+- 新增可程序化执行的 Contract Test：路由、工具、商品卡、子任务、错误、延迟和 SSE；
+- 新增统一离线报告：Contract Pass Rate、Task Success Rate/Pass@1、TTFT、P50/P95、失败归因与基线回归对比；
+- 新增通用 Recall@K、MRR@K、NDCG@K 计算基础；只有提供人工/业务相关性标签的 Case 才计分；
+- 接入可选 DeepEval GEval；只有硬契约通过的 Case 才触发 LLM-as-Judge；
+- 接入可选 RAGAS Knowledge 专项评测，并保留原始 retrieval contexts 供离线使用；
+- 测试操作与指标解释见 `docs/plan/phase4-agent-evaluation-test-guide.md`。
+
+尚未产生真实离线实测分数前，不在简历或文档中填写提升比例。
+
 ### 4.1 Golden Dataset
 
 建议先准备 30～50 个 Case，按场景分层：

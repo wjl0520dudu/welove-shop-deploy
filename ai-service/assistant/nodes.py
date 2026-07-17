@@ -175,6 +175,10 @@ async def _multimodal_shopping(
         "product_cards": product_cards,
         "sources": [],
         "tool_calls": [{
+            "tool_name": "search_multimodal_v1",
+            "input_params": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k},
+            "status": "completed",
+            # Backward-compatible aliases used by existing tests/scripts.
             "name": "search_multimodal_v1",
             "args": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k},
         }],
@@ -364,6 +368,7 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
             "task_type": state.get("task_type") or state.get("route") or "unknown",
             "product_cards": state.get("product_cards", []),
             "sources": state.get("sources", []),
+            "retrieved_contexts": state.get("retrieved_contexts", []),
             "tool_calls": state.get("tool_calls", []),
             "suggested_questions": state.get("suggested_questions", []),
             "run_id": state.get("run_id"),
@@ -427,7 +432,7 @@ def _merge_result(result: Dict[str, Any], *, task_type: str,
                   extra: Dict[str, Any] = None) -> dict:
     merged: Dict[str, Any] = {}
     for key in (
-        "answer", "product_cards", "sources", "tool_calls", "suggested_questions",
+        "answer", "product_cards", "sources", "tool_calls", "suggested_questions", "retrieved_contexts",
         "error", "error_code", "message",
     ):
         if key in result:
