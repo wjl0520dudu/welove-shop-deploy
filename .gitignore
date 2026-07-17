@@ -193,6 +193,6 @@ web/package-lock.json
 
 # -------- CI/CD / test artifacts (exported data, snapshots, local DB) --------
 /ai-service/tests/.local.sql
-/ai-service/tests/_export_*.local.py
-/ai-service/tests/_export_*.local.json
+/ai-service/tests/*.local.py
+/ai-service/tests/*.local.json
 /ai-service/tests/product_*.csv
