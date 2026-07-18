@@ -188,6 +188,7 @@ web/package-lock.json
 # -------- Local evaluation / planning notes (do not commit) --------
 /docs/agent-evaluation-playbook.local.md
 /docs/phase-test-results.local.md
+/docs/plan/agent-eval-comparison-v2.2-v2.4.md
 /ai-service/.pytest_cache/
 /ai-service/.pytest_temp/
 
