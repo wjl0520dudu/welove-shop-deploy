@@ -15,7 +15,15 @@ from agents.prompts import SHOPPING_AGENT_PROMPT
 from agents.state import ShoppingAgentState
 from agents.middleware import build_summarization_middleware
 from core.errors import ErrorCode
+from shopping.capabilities import (
+    CompareCapability,
+    DetailCapability,
+    RecommendCapability,
+    UserShoppingContextCapability,
+)
+from shopping.dispatcher import DispatchDecision, dispatch_shopping_capability
 from shopping.high_level_tools import SHOPPING_HIGH_LEVEL_TOOLS
+from shopping.schemas import ShoppingContext
 
 # Phase 1a 关键变更：LLM 只面对 4 个高层 tool，底层 12 个工具全部退到 Capability 内部。
 # 见 shopping/high_level_tools.py 和 shopping/capabilities/*。
@@ -148,6 +156,20 @@ class ShoppingAgent:
         store_memory = await get_business_memory(conversation_id, user_id)
         effective_memory = {**store_memory, **business_memory} if business_memory else store_memory
 
+        # High-certainty requests execute the real capability directly.  This is
+        # intentionally before create_agent: the model should not be allowed to
+        # freely choose a tool for an already deterministic business action.
+        decision = dispatch_shopping_capability(question, effective_memory)
+        if decision is not None:
+            return await self._run_dispatched_capability(
+                decision=decision,
+                question=question,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                jwt_token=jwt_token,
+                business_memory=effective_memory,
+            )
+
         system_prompt = self._build_system_prompt(effective_memory)
 
         # create_agent 每次重建：system_prompt 依赖本次记忆快照。工具已单例。
@@ -238,6 +260,137 @@ class ShoppingAgent:
             "suggested_questions": suggested_questions,
             "error": False,
         }
+
+    async def _run_dispatched_capability(
+        self,
+        *,
+        decision: DispatchDecision,
+        question: str,
+        conversation_id: Optional[str],
+        user_id: Optional[int],
+        jwt_token: Optional[str],
+        business_memory: Dict[str, Any],
+    ) -> dict:
+        """Execute one capability without an LLM tool-selection loop."""
+        if decision.capability == "transaction_unsupported":
+            return {
+                "answer": "当前导购助手支持商品推荐、对比和详情咨询；请在商品卡片或商品详情页完成加购、下单和支付。",
+                "task_type": "shopping",
+                "product_cards": [], "sources": [], "suggested_questions": [], "error": False,
+                "capability": decision.capability,
+                "dispatch_source": decision.source,
+                "tool_calls": [_dispatch_trace(decision, question, status="unsupported")],
+            }
+
+        context = ShoppingContext(
+            conversation_id=conversation_id, user_id=user_id, jwt_token=jwt_token,
+            is_logged_in=bool(user_id), business_memory=business_memory,
+            last_product_cards=list(business_memory.get("last_product_cards") or []),
+            last_focused_product=business_memory.get("last_focused_product"),
+            user_preferences=dict(business_memory.get("user_preferences") or {}),
+        )
+        if decision.capability == "recommend":
+            payload = (await RecommendCapability().run(question, context)).model_dump()
+        elif decision.capability == "compare":
+            payload = (await CompareCapability().run(question, context)).model_dump()
+        elif decision.capability == "detail":
+            payload = (await DetailCapability().run(question, context)).model_dump()
+        else:
+            payload = await UserShoppingContextCapability().run(context)
+
+        try:
+            latest_memory = await get_business_memory(conversation_id, user_id)
+        except Exception:  # noqa: BLE001
+            latest_memory = business_memory
+        return {
+            "answer": await _compose_capability_answer(
+                self._llm, decision.capability, question, payload,
+            ),
+            "task_type": "shopping",
+            "product_cards": payload.get("product_cards") or [],
+            "sources": [],
+            "tool_calls": [_dispatch_trace(decision, question, status="completed")],
+            "suggested_questions": build_preference_questions(latest_memory.get("user_preferences") or {}),
+            "capability": decision.capability,
+            "dispatch_source": decision.source,
+            "error": bool(payload.get("error", False)),
+            "error_code": payload.get("error_code"),
+            "message": payload.get("message"),
+        }
+
+
+def _dispatch_trace(decision: DispatchDecision, question: str, *, status: str) -> dict:
+    tool_by_capability = {
+        "recommend": "recommend_products", "compare": "compare_products",
+        "detail": "answer_product_detail", "user_context": "get_user_shopping_context",
+        "transaction_unsupported": "transaction_unsupported",
+    }
+    name = tool_by_capability[decision.capability]
+    return {"tool_name": name, "name": name, "input_params": {"query": question},
+            "args": {"query": question}, "status": status,
+            "dispatch_source": decision.source, "dispatch_reason": decision.reason}
+
+
+async def _compose_capability_answer(
+    llm: Any,
+    capability: str,
+    question: str,
+    payload: Dict[str, Any],
+) -> str:
+    """A grounded deterministic fallback; the capability owns all business facts."""
+    if payload.get("clarify_question"):
+        return str(payload["clarify_question"])
+    if payload.get("empty_reason"):
+        return str(payload["empty_reason"])
+    if payload.get("error"):
+        return str(payload.get("message") or "当前请求暂时无法处理，请稍后再试。")
+    if capability == "recommend":
+        cards = payload.get("product_cards") or []
+        if not cards:
+            return "暂时没有找到符合条件的商品，可以补充预算、品类或使用场景。"
+        lines = ["为你找到以下商品："]
+        for card in cards[:3]:
+            price = card.get("price") or card.get("base_price")
+            reason = card.get("reason") or "符合当前需求"
+            lines.append(f"- {card.get('title', '商品')}（{price} 元）：{reason}")
+        fallback = "\n".join(lines)
+    elif capability == "compare":
+        suggestion = payload.get("suggestion") or {}
+        fallback = str(suggestion.get("reason") or "已完成商品对比，详情请查看下方商品卡片。")
+    elif capability == "detail":
+        facts = payload.get("facts") or {}
+        fallback = "商品信息：" + json.dumps(facts, ensure_ascii=False, default=str)
+    else:
+        data = payload.get("data") or {}
+        return str(payload.get("message") or ("已获取你的购物上下文。" if data else "暂未获取到购物上下文。"))
+
+    # The Dispatcher already chose and executed the Capability. One bounded
+    # rendering call restores answer quality without reopening tool selection.
+    if llm is None:
+        return fallback
+    evidence = {
+        "product_cards": (payload.get("product_cards") or [])[:3],
+        "comparison_rows": (payload.get("comparison_rows") or [])[:5],
+        "suggestion": payload.get("suggestion") or {},
+        "facts": payload.get("facts") or {},
+    }
+    prompt = (
+        "你是电商导购的表达层。只依据给定结构化事实回答用户，不得编造商品、"
+        "价格、库存、成分或功效；不要调用工具；回答要直接覆盖用户问题。"
+        "若事实无法验证某项偏好，要明确说明。\n"
+        f"用户问题：{question}\n能力：{capability}\n事实："
+        + json.dumps(evidence, ensure_ascii=False, default=str)
+    )
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content="你只能根据提供的事实生成自然、简洁的中文回答。"),
+            HumanMessage(content=prompt),
+        ])
+        answer = str(getattr(response, "content", "") or "").strip()
+        return answer or fallback
+    except Exception:  # noqa: BLE001
+        logger.warning("dispatched capability answer rendering failed", exc_info=True)
+        return fallback
 
 
 def _extract_tool_calls(messages: list) -> List[Dict[str, Any]]:

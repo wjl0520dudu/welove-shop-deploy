@@ -67,7 +67,12 @@ async def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: 
         "search_knowledge: 开始检索 query=%r mode=%s use_rerank=%s",
         query, mode, use_rerank,
     )
-    plan = RetrievalPlan(query=query, top_k=5, search_mode=mode, use_rerank=bool(use_rerank))
+    # Query planning is deterministic and schema-constrained.  The LLM sees
+    # this tool signature, not raw Milvus field names or expressions.
+    from rag.query_planner import plan_knowledge_query
+    plan, query_plan = plan_knowledge_query(
+        query, top_k=5, search_mode=mode, use_rerank=bool(use_rerank),
+    )
     output = get_retriever().retrieve(plan)
 
     sources = [
@@ -167,6 +172,7 @@ async def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: 
         "search_mode": mode,
         "use_rerank": bool(use_rerank),
         "fallback_used": fallback_used,
+        "query_plan": query_plan.model_dump(),
     }
 
 

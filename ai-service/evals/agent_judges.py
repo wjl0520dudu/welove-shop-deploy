@@ -47,9 +47,13 @@ def evaluate_with_deepeval(
         )
         for tc in (response.get("tool_calls") or [])
     ]
+    expected_tool_names = [
+        "recommend_products" if str(name) == "search_products" else str(name)
+        for name in (expected.get("required_tools") or [])
+    ]
     expected_tools = [
         ToolCall(name=str(name))
-        for name in (expected.get("required_tools") or [])
+        for name in expected_tool_names
     ]
 
     metrics: dict[str, dict[str, Any]] = {}
@@ -67,19 +71,27 @@ def evaluate_with_deepeval(
     except Exception as exc:
         metrics["task_completion"] = _metric_error(exc)
 
-    # 2. ToolCorrectnessMetric — tool selection correctness
-    try:
-        tool_metric = ToolCorrectnessMetric(model=model, include_reason=True)
-        tool_case = LLMTestCase(
-            input=user_input,
-            actual_output=actual_output,
-            tools_called=tools_called,
-            expected_tools=expected_tools,
-        )
-        tool_metric.measure(tool_case)
-        metrics["tool_correctness"] = _metric_result(tool_metric)
-    except Exception as exc:
-        metrics["tool_correctness"] = _metric_error(exc)
+    # Passing expected_tools=[] makes DeepEval treat every legitimate tool call
+    # as unexpected. Evaluate tool choice only when the Golden case specifies it.
+    if not expected_tool_names:
+        metrics["tool_correctness"] = {
+            "score": None,
+            "passed": True,
+            "reason": "skipped: required_tools is not specified for this case",
+        }
+    else:
+        try:
+            tool_metric = ToolCorrectnessMetric(model=model, include_reason=True)
+            tool_case = LLMTestCase(
+                input=user_input,
+                actual_output=actual_output,
+                tools_called=tools_called,
+                expected_tools=expected_tools,
+            )
+            tool_metric.measure(tool_case)
+            metrics["tool_correctness"] = _metric_result(tool_metric)
+        except Exception as exc:
+            metrics["tool_correctness"] = _metric_error(exc)
 
     # 3. GoalAccuracyMetric — commented out: single-turn conversation lacks plan structure
     #    for the metric to evaluate plan quality meaningfully. Revisit with multi-turn.

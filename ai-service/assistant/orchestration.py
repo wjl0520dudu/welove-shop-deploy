@@ -5,6 +5,26 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
+from pydantic import BaseModel, Field
+
+
+class TaskEvidence(BaseModel):
+    kind: str
+    ref_id: str
+    facts: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskExecutionResult(BaseModel):
+    """Stable internal contract for DAG execution and downstream consumption."""
+    task_id: str
+    route: str
+    capability: str | None = None
+    status: str
+    answer: str = ""
+    evidence: list[TaskEvidence] = Field(default_factory=list)
+    product_cards: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    hard_constraints_satisfied: bool = True
 
 
 @dataclass(frozen=True)

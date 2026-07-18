@@ -18,9 +18,41 @@ from rag.multimodal_embeddings import (
     embed_image,
     multimodal_rerank,
 )
+from shopping.category_resolver import normalize_product_category
 from shopping.vector_store_v2 import get_product_milvus_store_v2
 
 logger = logging.getLogger("ai-service.shopping.multimodal_search")
+
+
+def extract_explicit_product_filters(query_text: str) -> Dict[str, Any]:
+    """Low-cost constraints for image retrieval; never infer a budget silently."""
+    import re
+    text = query_text or ""
+    filters: Dict[str, Any] = {"status": 1}
+    max_match = re.search(r"(\d+(?:\.\d+)?)\s*元?(?:以内|以下|不超过|最多)", text)
+    min_match = re.search(r"(\d+(?:\.\d+)?)\s*元?(?:以上|起)", text)
+    if max_match:
+        filters["budget_max"] = float(max_match.group(1))
+    if min_match:
+        filters["budget_min"] = float(min_match.group(1))
+    category = normalize_product_category(text)
+    if category:
+        filters["category"] = category
+    return filters
+
+
+def enforce_explicit_product_filters(items: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in items:
+        price = item.get("base_price", item.get("price"))
+        if filters.get("budget_max") is not None and (price is None or float(price) > float(filters["budget_max"])):
+            continue
+        if filters.get("budget_min") is not None and (price is None or float(price) < float(filters["budget_min"])):
+            continue
+        if filters.get("status") is not None and item.get("status") is not None and int(item["status"]) != int(filters["status"]):
+            continue
+        out.append(item)
+    return out
 
 
 _ROUTE_SCORE_FIELDS = ("dense_score", "bm25_score", "sparse_score", "image_score", "multimodal_score")

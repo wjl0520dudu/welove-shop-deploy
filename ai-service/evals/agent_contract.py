@@ -12,6 +12,9 @@ from fnmatch import fnmatchcase
 from typing import Any
 
 
+_TOOL_ALIASES = {"search_products": {"recommend_products"}}
+
+
 def validate_agent_contract(case: dict[str, Any], observation: dict[str, Any]) -> dict[str, Any]:
     """Validate one normalized Agent result against its Golden Dataset contract.
 
@@ -58,7 +61,7 @@ def validate_agent_contract(case: dict[str, Any], observation: dict[str, Any]) -
     required_tools = _as_strings(expected.get("required_tools"))
     if required_tools:
         actual_tools = [str(item.get("tool_name") or item.get("name") or "") for item in tool_calls]
-        missing = [pattern for pattern in required_tools if not any(fnmatchcase(name, pattern) for name in actual_tools)]
+        missing = [pattern for pattern in required_tools if not any(_tool_matches(pattern, name) for name in actual_tools)]
         check("required_tools", not missing, f"missing={missing}, actual={actual_tools}")
 
     if expected.get("validate_tool_inputs"):
@@ -177,3 +180,7 @@ def _as_strings(value: Any) -> list[str]:
     if isinstance(value, Iterable):
         return [str(item) for item in value if str(item).strip()]
     return [str(value)]
+
+
+def _tool_matches(expected_pattern: str, actual_name: str) -> bool:
+    return fnmatchcase(actual_name, expected_pattern) or actual_name in _TOOL_ALIASES.get(expected_pattern, set())

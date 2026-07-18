@@ -19,6 +19,8 @@ from agents import runtime as _runtime  # 用模块引用，运行时动态读 c
 from assistant.nodes import make_nodes
 from assistant.orchestration import (
     PlanValidationError,
+    TaskEvidence,
+    TaskExecutionResult,
     build_task_levels,
     dependency_business_memory,
     dependency_payload,
@@ -481,7 +483,7 @@ class AssistantGraph:
             )
 
         has_error = bool(result.get("error"))
-        return {
+        task_result = {
             "id": task.get("id"),
             "question": task.get("question") or "",
             "intent_hint": task.get("intent_hint"),
@@ -513,6 +515,22 @@ class AssistantGraph:
             "error_code": result.get("error_code"),
             "message": result.get("message"),
         }
+        evidence = [
+            TaskEvidence(kind="product", ref_id=str(card.get("product_id") or card.get("id") or ""), facts=card).model_dump()
+            for card in task_result["product_cards"] if isinstance(card, dict)
+        ] + [
+            TaskEvidence(kind="knowledge_source", ref_id=str(source.get("doc_id") or source.get("url") or source.get("title") or ""), facts=source).model_dump()
+            for source in task_result["sources"] if isinstance(source, dict)
+        ]
+        task_result["evidence"] = evidence
+        task_result["execution_contract"] = TaskExecutionResult(
+            task_id=str(task_result["id"]), route=str(task_result["route"] or "unknown"),
+            capability=result.get("capability"), status=str(task_result["status"]),
+            answer=str(task_result["answer"]), evidence=[TaskEvidence.model_validate(item) for item in evidence],
+            product_cards=task_result["product_cards"], sources=task_result["sources"],
+            hard_constraints_satisfied=not bool(result.get("hard_constraint_violation")),
+        ).model_dump()
+        return task_result
 
     async def _run_business_task(self, task_state: AssistantState) -> dict[str, Any]:
         route_result = await self._route(task_state)

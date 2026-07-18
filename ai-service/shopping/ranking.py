@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core.config import config
+from shopping.category_resolver import normalize_product_category
 from shopping.schemas import RankedProduct, ShoppingNeed
 
 
@@ -217,7 +218,8 @@ def _candidate_text(c: Dict[str, Any]) -> str:
 def _score_category(text: str, category: Optional[str]) -> float:
     if not category:
         return 0.5   # 用户没指定品类，中性分
-    return 1.0 if category in text else 0.0
+    normalized = normalize_product_category(category)
+    return 1.0 if category in text or (normalized and normalized in text) else 0.0
 
 
 def _score_preferences(

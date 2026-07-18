@@ -87,6 +87,13 @@ class ShoppingNeed(BaseModel):
     confidence: float = 0.0
 
 
+class ProductFilterPlan(BaseModel):
+    """Server-owned product constraints; LLM output never becomes an expr directly."""
+    hard_filters: Dict[str, Any] = Field(default_factory=dict)
+    soft_preferences: List[str] = Field(default_factory=list)
+    relaxation_policy: Dict[str, bool] = Field(default_factory=dict)
+
+
 # ---- 检索计划（内部使用，MVP 阶段仅召回层内部消费）-----------------------
 
 class ShoppingRetrievalPlan(BaseModel):
@@ -102,6 +109,7 @@ class ShoppingRetrievalPlan(BaseModel):
 
     # Milvus/PG 通用过滤字段
     filters: Dict[str, Any] = Field(default_factory=dict)
+    hard_filters: Dict[str, Any] = Field(default_factory=dict)
     # 召回不足时的放宽阶梯
     relaxed_filters: List[Dict[str, Any]] = Field(default_factory=list)
 

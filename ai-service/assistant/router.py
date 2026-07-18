@@ -57,6 +57,17 @@ _COMPOUND_MARKERS = (
     "再问", "除此之外", "一并", "分别", "并告诉", "并介绍", "并说明", "并分析",
     "并解释", "并回答",
 )
+_MULTI_TARGET_PATTERNS = (
+    re.compile(r"各\s*[一1]\s*(?:款|个|台|双|杯|盒|件)"),
+    re.compile(r"[一1]\s*(?:款|个|台|双|杯|盒|件).{0,30}[、，,和].{0,30}[一1]\s*(?:款|个|台|双|杯|盒|件)"),
+)
+# Pattern: "{product_name}的{attribute}" — explicit product + detail aspect.
+# e.g. "小棕瓶的成分是什么", "雅诗兰黛小棕瓶的功效".
+# Though the attribute word ("成分"/"功效") lives in _KNOWLEDGE_PATTERNS,
+# the "的" binding makes this a product-specific inquiry → shopping/detail.
+_PRODUCT_ATTRIBUTE_QUERY = re.compile(
+    r".{2,6}的(成分|功效|作用|原理|用法|浓度|副作用|禁忌)"
+)
 
 
 @dataclass(frozen=True)
@@ -148,6 +159,17 @@ def classify_high_confidence_rule(
             matched=True,
         )
 
+    # A query like "小棕瓶的成分是什么" explicitly names a product + its
+    # attribute via "的".  Route to shopping (detail) even though the
+    # attribute word appears in _KNOWLEDGE_PATTERNS.
+    if _PRODUCT_ATTRIBUTE_QUERY.search(lowered):
+        return RuleRouteDecision(
+            route="shopping",
+            confidence=0.95,
+            reason="rule:product attribute inquiry with explicit product reference",
+            matched=True,
+        )
+
     # Mixed signals require context/semantic reasoning. Do not guess with rules.
     if shopping_hits and knowledge_hits:
         return RuleRouteDecision(
@@ -177,7 +199,7 @@ def classify_high_confidence_rule(
 def can_short_circuit_orchestrator(question: str, *, has_image: bool = False) -> bool:
     """Whether an obviously single-intent request can skip the planner LLM."""
     text = (question or "").strip()
-    if any(marker in text for marker in _COMPOUND_MARKERS):
+    if any(marker in text for marker in _COMPOUND_MARKERS) or any(pattern.search(text) for pattern in _MULTI_TARGET_PATTERNS):
         return False
     if has_image:
         # A plain image lookup is deterministic. Image + explicit knowledge wording

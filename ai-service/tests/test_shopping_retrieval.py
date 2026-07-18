@@ -35,17 +35,30 @@ class TestBuildRetrievalPlan:
         need = ShoppingNeed(category="防晒", budget_max=200)
         plan = build_retrieval_plan(need)
         assert plan.filters["category"] == "防晒"
+        assert plan.filters["status"] == 1
         assert plan.filters["budget_max"] == 200
         assert "budget_min" not in plan.filters
         assert "brand" not in plan.filters
 
-    def test_relaxed_filters_include_budget_relaxed(self):
+    def test_only_category_is_relaxed(self):
         need = ShoppingNeed(category="防晒", budget_max=200)
         plan = build_retrieval_plan(need)
-        # 预算 * 1.2 = 240
-        assert any(r.get("budget_max") == 240.0 for r in plan.relaxed_filters)
-        # 最后一档：只保 category
-        assert plan.relaxed_filters[-1] == {"category": "防晒"}
+        assert plan.relaxed_filters == [{"status": 1, "budget_max": 200}]
+        assert plan.hard_filters["budget_max"] == 200
+
+    def test_no_relaxed_pass_for_unknown_category(self):
+        plan = build_retrieval_plan(ShoppingNeed(category="提神饮品", budget_max=200))
+        assert plan.relaxed_filters == []
+
+    def test_alias_category_is_normalized_before_filtering(self):
+        plan = build_retrieval_plan(ShoppingNeed(category="抗初老精华"))
+        assert plan.filters["category"] == "精华"
+        assert plan.hard_filters["category"] == "精华"
+
+    def test_unknown_category_remains_semantic_only(self):
+        plan = build_retrieval_plan(ShoppingNeed(category="提神饮品"))
+        assert "category" not in plan.filters
+        assert "category" not in plan.hard_filters
 
     def test_use_rerank_true_in_phase_1b(self):
         """Phase 1b 默认走 rerank 两阶段。"""
@@ -230,7 +243,12 @@ class TestShoppingRetriever:
         retriever = ShoppingRetriever(milvus_store=milvus, reranker=rerank)
 
         need = ShoppingNeed(category="防晒", budget_max=200)
-        plan = build_retrieval_plan(need, top_k=5)
+        plan = ShoppingRetrievalPlan(
+            top_k=5,
+            initial_top_k=20,
+            use_rerank=True,
+            relaxed_filters=[{"category": "防晒"}],
+        )
         out, trace = asyncio.run(retriever.retrieve(plan, need))
 
         # 有 relaxed 补量
@@ -265,7 +283,9 @@ class TestShoppingRetriever:
 
         retriever = ShoppingRetriever(milvus_store=milvus, reranker=rerank)
 
-        plan = ShoppingRetrievalPlan(top_k=3, use_rerank=True)
+        plan = ShoppingRetrievalPlan(
+            top_k=3, use_rerank=True, filters={"category": "护肤品"},
+        )
         need = ShoppingNeed(category="护肤品", budget_max=300)
         out, trace = asyncio.run(retriever.retrieve(plan, need))
 

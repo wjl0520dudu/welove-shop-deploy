@@ -81,11 +81,17 @@ async def _multimodal_shopping(
     不走 ShoppingAgent 的 tool loop，因为文本 LLM 看不到图，让它决定要不要
     调多模态工具没意义；直接程序侧调多模态检索，把结果交给 LLM 生成话术。
     """
-    from shopping.multimodal_search import search_multimodal_v1
+    from shopping.multimodal_search import (
+        enforce_explicit_product_filters,
+        extract_explicit_product_filters,
+        search_multimodal_v1,
+    )
     from shopping.relevance_judge import filter_candidates
     from shopping.personalization import personalized_rerank_candidates
 
     preferences = dict((business_memory or {}).get("user_preferences") or {})
+    hard_filters = extract_explicit_product_filters(query_text)
+    retrieval_counts: dict[str, int] = {}
 
     try:
         # 多召回一批候选，再允许 judge 过滤掉异类；最终仍只返回 top_k，
@@ -95,7 +101,9 @@ async def _multimodal_shopping(
             query_text=query_text or "",
             query_image_url=image_url,
             top_k=retrieval_top_k,
+            filters=hard_filters,
         )
+        retrieval_counts["after_recall"] = len(results)
         results = await filter_candidates(
             llm=llm,
             query_text=query_text or "",
@@ -103,7 +111,11 @@ async def _multimodal_shopping(
             candidates=results,
             limit=retrieval_top_k,
         )
+        retrieval_counts["after_judge"] = len(results)
         results = personalized_rerank_candidates(results, preferences)[:top_k]
+        retrieval_counts["after_personalization"] = len(results)
+        results = enforce_explicit_product_filters(results, hard_filters)[:top_k]
+        retrieval_counts["after_hard_filters"] = len(results)
     except Exception as e:  # noqa: BLE001
         logger.exception("multimodal shopping retrieval failed")
         return {
@@ -120,7 +132,15 @@ async def _multimodal_shopping(
             "task_type": "shopping",
             "product_cards": [],
             "sources": [],
-            "tool_calls": [],
+            # Search was executed above even when every candidate is filtered
+            # out. Preserve that fact for Contract evaluation and debugging.
+            "tool_calls": [{
+                "tool_name": "search_multimodal_v1",
+                "input_params": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k, "hard_filters": hard_filters, "retrieval_counts": retrieval_counts},
+                "status": "completed_empty",
+                "name": "search_multimodal_v1",
+                "args": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k, "hard_filters": hard_filters, "retrieval_counts": retrieval_counts},
+            }],
             "error": False,
             "suggested_questions": build_preference_questions(preferences),
         }
@@ -174,13 +194,13 @@ async def _multimodal_shopping(
         "task_type": "shopping",
         "product_cards": product_cards,
         "sources": [],
-        "tool_calls": [{
+            "tool_calls": [{
             "tool_name": "search_multimodal_v1",
-            "input_params": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k},
+            "input_params": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k, "hard_filters": hard_filters, "retrieval_counts": retrieval_counts},
             "status": "completed",
             # Backward-compatible aliases used by existing tests/scripts.
             "name": "search_multimodal_v1",
-            "args": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k},
+            "args": {"query_text": query_text, "query_image_url": image_url, "top_k": top_k, "hard_filters": hard_filters, "retrieval_counts": retrieval_counts},
         }],
         "error": False,
         "suggested_questions": build_preference_questions(preferences),
@@ -433,7 +453,7 @@ def _merge_result(result: Dict[str, Any], *, task_type: str,
     merged: Dict[str, Any] = {}
     for key in (
         "answer", "product_cards", "sources", "tool_calls", "suggested_questions", "retrieved_contexts",
-        "error", "error_code", "message",
+        "capability", "dispatch_source", "hard_constraint_violation", "error", "error_code", "message",
     ):
         if key in result:
             merged[key] = result[key]

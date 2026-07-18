@@ -114,6 +114,8 @@ def test_obvious_single_intent_can_skip_orchestrator():
     assert can_short_circuit_orchestrator("你好") is True
     assert can_short_circuit_orchestrator("推荐面霜，然后解释烟酰胺功效") is False
     assert can_short_circuit_orchestrator("介绍图片里的成分", has_image=True) is False
+    assert can_short_circuit_orchestrator("推荐 iPhone 和 MacBook 各一款") is False
+    assert can_short_circuit_orchestrator("推荐一款面霜、一款防晒") is False
 
 
 def test_historical_cart_route_is_normalized_to_shopping():

@@ -70,6 +70,11 @@ class Retriever:
         return self._reranker
 
     def retrieve(self, plan: RetrievalPlan) -> RetrievalOutput:
+        if config.RAG_PARENT_CHILD_ENABLED:
+            # Only child chunks participate in recall/rerank. Parents are loaded
+            # after precision ranking, following the adopted parent-child design.
+            plan = plan.model_copy(deep=True)
+            plan.chunk_types = ["child"]
         metadata_filter = build_metadata_filter(plan)
 
         # ── 阶段 1：初始召回 ──
@@ -97,11 +102,26 @@ class Retriever:
             # 未开 rerank：按向量分数排序 + 截断
             recall_results = sorted(recall_results, key=lambda x: x.score or 0, reverse=True)[:final_top_k]
 
+        context_results = recall_results
+        if config.RAG_PARENT_CHILD_ENABLED and hasattr(self.vector_store, "get_parent_chunks"):
+            from rag.parent_child import aggregate_parent_hits, build_local_parent_windows
+            child_hits = [{"parent_id": item.metadata.parent_id, "rerank_score": item.score,
+                           "child_index": item.metadata.child_index, "content": item.content}
+                          for item in recall_results if item.metadata.parent_id]
+            groups = aggregate_parent_hits(child_hits, limit=min(3, final_top_k))
+            parents = self.vector_store.get_parent_chunks([group["parent_id"] for group in groups])
+            parent_map = {str(parent.metadata.parent_id): {"parent_id": parent.metadata.parent_id,
+                          "doc_id": parent.metadata.doc_id, "content": parent.content} for parent in parents}
+            windows = build_local_parent_windows(parent_map, groups)
+            context_results = [SearchResult(content=window["content"], metadata=next(
+                parent.metadata for parent in parents if str(parent.metadata.parent_id) == str(window["parent_id"])
+            ), score=float(window["score"])) for window in windows]
+
         return RetrievalOutput(
             plan=plan,
             results=recall_results,
             sources=build_sources(recall_results),
-            knowledge_context=build_knowledge_context(recall_results),
+            knowledge_context=build_knowledge_context(context_results),
         )
 
     def _apply_rerank(

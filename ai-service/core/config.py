@@ -37,6 +37,9 @@ class Config:
     # 2.RAG 文档分块配置
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
+    # Requires a dedicated/reindexed collection that persists parent_id.  Keep
+    # false until the migration script has built and validated that index.
+    RAG_PARENT_CHILD_ENABLED = os.getenv("RAG_PARENT_CHILD_ENABLED", "false").lower() in ("1", "true", "yes")
 
     # 3.向量库和 embedding 配置
     # ── OpenAI 兼容通道（历史遗留，暂不删）──

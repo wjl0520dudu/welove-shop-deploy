@@ -25,7 +25,7 @@ from langchain_core.documents import Document
 
 from core.config import config
 from rag.embeddings import get_embeddings
-from rag.models import DocumentChunk, MetadataFilter, SearchRequest, SearchResult
+from rag.models import ChunkMetadata, DocumentChunk, MetadataFilter, SearchRequest, SearchResult
 
 from pymilvus import (
     connections,
@@ -112,6 +112,10 @@ def _build_fields(dim: int) -> list[FieldSchema]:
         FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
         FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=256),
         FieldSchema(name="chunk_index", dtype=DataType.INT64),
+        # Parent-child index fields. Existing collections must be reindexed
+        # before RAG_PARENT_CHILD_ENABLED is switched on.
+        FieldSchema(name="parent_id", dtype=DataType.VARCHAR, max_length=128),
+        FieldSchema(name="child_index", dtype=DataType.INT64),
     ]
 
 
@@ -122,7 +126,9 @@ INSERT_FIELDS = [
     "doc_id", "doc_type", "chunk_type",
     "category_id", "product_id",
     "source", "title", "chunk_index",
+    "parent_id", "child_index",
 ]
+LEGACY_INSERT_FIELDS = [field for field in INSERT_FIELDS if field not in {"parent_id", "child_index"}]
 
 # search / hybrid_search 用的 output_fields（不含向量本身）
 SCALAR_FIELDS = [
@@ -130,6 +136,11 @@ SCALAR_FIELDS = [
     "category_id", "product_id",
     "source", "title", "chunk_index",
 ]
+PARENT_CHILD_SCALAR_FIELDS = [*SCALAR_FIELDS, "parent_id", "child_index"]
+
+
+def _active_scalar_fields() -> list[str]:
+    return PARENT_CHILD_SCALAR_FIELDS if config.RAG_PARENT_CHILD_ENABLED else SCALAR_FIELDS
 
 
 class MilvusVectorStore:
@@ -236,6 +247,8 @@ class MilvusVectorStore:
                 "source":      hit.entity.get("source", ""),
                 "title":       hit.entity.get("title", ""),
                 "chunk_index": hit.entity.get("chunk_index", 0),
+                "parent_id":   hit.entity.get("parent_id", ""),
+                "child_index": hit.entity.get("child_index", 0),
             }
             text = hit.entity.get("text", "")
             score = float(getattr(hit, "distance", 0.0) or 0.0)
@@ -277,10 +290,35 @@ class MilvusVectorStore:
             "source":       [str(m.get("source", "")) for m in meta_list],
             "title":        [str(m.get("title", "")) for m in meta_list],
             "chunk_index":  [int(m.get("chunk_index", 0)) for m in meta_list],
+            "parent_id":    [str(m.get("parent_id", "")) for m in meta_list],
+            "child_index":  [int(m.get("child_index", 0) or 0) for m in meta_list],
         }
-        collection.insert([rows[f] for f in INSERT_FIELDS])
+        insert_fields = INSERT_FIELDS if config.RAG_PARENT_CHILD_ENABLED else LEGACY_INSERT_FIELDS
+        collection.insert([rows[f] for f in insert_fields])
         collection.flush()
         return len(chunks)
+
+    def get_parent_chunks(self, parent_ids: list[str]) -> list[SearchResult]:
+        if not parent_ids:
+            return []
+        collection = Collection(self.collection_name)
+        collection.load()
+        quoted = ", ".join(f'"{pid.replace(chr(34), chr(92) + chr(34))}"' for pid in parent_ids)
+        rows = collection.query(
+            expr=f'parent_id in [{quoted}] and chunk_type == "parent"',
+            output_fields=PARENT_CHILD_SCALAR_FIELDS,
+            limit=len(parent_ids),
+        )
+        out: list[SearchResult] = []
+        for row in rows:
+            out.append(SearchResult(content=str(row.get("text") or ""), metadata=ChunkMetadata(
+                doc_id=row.get("doc_id"), source=str(row.get("source") or ""), title=str(row.get("title") or ""),
+                doc_type=str(row.get("doc_type") or ""), chunk_type=str(row.get("chunk_type") or ""),
+                category_id=row.get("category_id"), product_id=row.get("product_id"),
+                chunk_index=int(row.get("chunk_index") or 0), parent_id=row.get("parent_id"),
+                child_index=int(row.get("child_index") or 0),
+            )))
+        return out
 
     # ── 2. 检索：按 search_mode 路由 ─────────────────────────
     def search(self, request: SearchRequest) -> list[SearchResult]:
@@ -308,7 +346,7 @@ class MilvusVectorStore:
             param={"metric_type": "IP", "params": {}},
             limit=top_k,
             expr=expr,
-            output_fields=SCALAR_FIELDS,
+            output_fields=_active_scalar_fields(),
         )[0]
         return self._results_to_search_results(results, score_field="dense")
 
@@ -334,7 +372,7 @@ class MilvusVectorStore:
             param={"metric_type": "BM25", "params": {}},
             limit=top_k,
             expr=expr,
-            output_fields=SCALAR_FIELDS,
+            output_fields=_active_scalar_fields(),
         )[0]
         return self._results_to_search_results(results, score_field="sparse")
 
@@ -373,7 +411,7 @@ class MilvusVectorStore:
             [dense_req, sparse_req],
             rerank=RRFRanker(k=60),
             limit=top_k,
-            output_fields=SCALAR_FIELDS,
+            output_fields=_active_scalar_fields(),
         )[0]
         return self._results_to_search_results(results, score_field="hybrid")
 

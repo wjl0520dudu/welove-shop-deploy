@@ -18,6 +18,9 @@ class ChunkMetadata(BaseModel):
     chunk_index: int = 0
     total_chunks: int = 0
     content_hash: str = ""
+    parent_id: Optional[str] = None
+    child_index: Optional[int] = None
+    index_version: Optional[str] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 

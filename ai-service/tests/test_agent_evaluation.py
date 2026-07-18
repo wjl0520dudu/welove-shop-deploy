@@ -40,6 +40,14 @@ def test_contract_reports_route_and_sse_failures():
     assert {"route", "product_cards", "sse_final_done"}.issubset(result["failure_reasons"])
 
 
+def test_contract_accepts_legacy_product_search_capability_alias():
+    result = validate_agent_contract(
+        _case(required_tools=["search_products"]),
+        {"response": {"answer": "已推荐", "tool_calls": [{"tool_name": "recommend_products"}]}},
+    )
+    assert result["passed"] is True
+
+
 def test_metrics_treat_judge_as_task_success_gate_and_compare_baseline():
     rows = [
         {"id": "a", "scenario": "shopping", "latency_ms": 100, "ttft_ms": 20,

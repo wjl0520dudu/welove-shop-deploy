@@ -642,6 +642,9 @@ def _retrieved_ids(response: dict[str, Any]) -> list[str]:
 
 
 def main() -> None:
+    # Windows Python 3.12+:
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     parser = argparse.ArgumentParser(description="Run unified Agent Golden Dataset evaluation")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -674,9 +677,17 @@ def main() -> None:
     if args.recorded_results:
         observations = load_recorded_results(args.recorded_results)
     elif args.direct:
-        observations = asyncio.run(collect_direct_results(cases, max(1.0, args.timeout_seconds)))
+        # Manual event loop: asyncio.run() closes the loop after the coroutine,
+        # but httpx's cleanup callbacks may still reference it, causing
+        # RuntimeError('Event loop is closed').  Keeping the loop alive avoids
+        # the race; the OS reclaims everything on process exit.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        observations = loop.run_until_complete(collect_direct_results(cases, max(1.0, args.timeout_seconds)))
     else:
-        observations = asyncio.run(collect_http_results(cases, args.base_url, max(1.0, args.timeout_seconds)))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        observations = loop.run_until_complete(collect_http_results(cases, args.base_url, max(1.0, args.timeout_seconds)))
     cache = load_judge_cache(args.judge_cache) if args.deepeval else None
     report = evaluate(cases, observations, deepeval_enabled=args.deepeval, ragas_enabled=args.ragas,
                       judge_threshold=args.judge_threshold, judge_cache=cache)
