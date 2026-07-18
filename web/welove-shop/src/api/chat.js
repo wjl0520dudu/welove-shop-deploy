@@ -166,6 +166,12 @@ function dispatchChatEvent({ event, data }, cb) {
     case 'task_type':
       cb.onRouted && cb.onRouted((obj && (obj.taskType || obj.task_type)) || obj)
       break
+    case 'orchestrator_plan':
+      cb.onOrchestratorPlan && cb.onOrchestratorPlan(obj || {})
+      break
+    case 'orchestrator_subtask':
+      cb.onOrchestratorSubtask && cb.onOrchestratorSubtask(obj || {})
+      break
     case 'final': {
       // final 携带完整响应：在此提取卡片/路由。
       // 文本已由 token 增量给出，这里不再重复追加，避免答案显示两遍；

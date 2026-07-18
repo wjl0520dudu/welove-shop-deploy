@@ -129,6 +129,7 @@ public class ChatServiceImpl implements ChatService {
         Map<String, Object>[] confirmCard = new Map[]{null};
         Map<String, Object>[] cartSelection = new Map[]{null};
         String[] sources = {""};
+        Map<String, Object>[] agentMeta = new Map[]{new java.util.LinkedHashMap<>()};
 
         // ============= SseEmitter 生命周期回调 =============
         // onCompletion: 流正常关闭时调用(包括 emitter.complete() 和客户端正常断开)
@@ -221,6 +222,10 @@ public class ChatServiceImpl implements ChatService {
                         return;
                     }
                     switch (eventType == null ? "" : eventType) {
+                        case "orchestrator_plan":
+                        case "orchestrator_subtask":
+                            captureOrchestratorMeta(eventType, event, agentMeta[0]);
+                            break;
                         case "token":
                             answerBuilder.append(event.getOrDefault("content", ""));
                             break;
@@ -228,6 +233,7 @@ public class ChatServiceImpl implements ChatService {
                             if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                             break;
                         case "final":
+                            captureFinalAgentMeta(event, agentMeta[0]);
                             // ai-service 的 final data 即完整 AIResponse，字段在顶层(非嵌套 response)
                             Object finalAnswer = event.get("answer");
                             String finalTaskType = String.valueOf(event.getOrDefault("task_type", ""));
@@ -281,6 +287,7 @@ public class ChatServiceImpl implements ChatService {
                             aiMsg.setCartSelection(cartSelection[0]);
                         }
                         aiMsg.setSources(sources[0].isEmpty() ? null : sources[0]);
+                        if (!agentMeta[0].isEmpty()) aiMsg.setAgentMeta(agentMeta[0]);
                         aiMsg.setCreateTime(LocalDateTime.now());
                         msgMapper.insert(aiMsg);
                         long streamDuration = System.currentTimeMillis() - streamStartMs;
@@ -365,6 +372,7 @@ public class ChatServiceImpl implements ChatService {
         Map<String, Object>[] confirmCard = new Map[]{null};
         Map<String, Object>[] cartSelection = new Map[]{null};
         String[] sources = {""};
+        Map<String, Object>[] agentMeta = new Map[]{new java.util.LinkedHashMap<>()};
 
         emitter.onCompletion(() -> log.debug("SseEmitter[MM] onCompletion conv={}", conversationId));
         emitter.onTimeout(() -> {
@@ -441,6 +449,10 @@ public class ChatServiceImpl implements ChatService {
                         return;
                     }
                     switch (eventType) {
+                        case "orchestrator_plan":
+                        case "orchestrator_subtask":
+                            captureOrchestratorMeta(eventType, event, agentMeta[0]);
+                            break;
                         case "token":
                             answerBuilder.append(event.getOrDefault("content", ""));
                             break;
@@ -448,6 +460,7 @@ public class ChatServiceImpl implements ChatService {
                             if (event.containsKey("task_type")) taskType[0] = String.valueOf(event.get("task_type"));
                             break;
                         case "final":
+                            captureFinalAgentMeta(event, agentMeta[0]);
                             Object finalAnswer = event.get("answer");
                             String finalTaskType = String.valueOf(event.getOrDefault("task_type", ""));
                             if ("orchestrator".equals(finalTaskType)
@@ -496,6 +509,7 @@ public class ChatServiceImpl implements ChatService {
                         if (confirmCard[0] != null) aiMsg.setConfirmCard(confirmCard[0]);
                         if (cartSelection[0] != null) aiMsg.setCartSelection(cartSelection[0]);
                         aiMsg.setSources(sources[0].isEmpty() ? null : sources[0]);
+                        if (!agentMeta[0].isEmpty()) aiMsg.setAgentMeta(agentMeta[0]);
                         aiMsg.setCreateTime(LocalDateTime.now());
                         msgMapper.insert(aiMsg);
                         saveQaLog(userId, conversationId,
@@ -695,6 +709,29 @@ public class ChatServiceImpl implements ChatService {
         return msgMapper.selectCount(new LambdaQueryWrapper<Message>()
                 .eq(Message::getConversationId, convId)) <= 1;
     }
+    @SuppressWarnings("unchecked")
+    private static void captureOrchestratorMeta(String eventType, Map<String, Object> event,
+                                                Map<String, Object> agentMeta) {
+        if ("orchestrator_plan".equals(eventType)) {
+            agentMeta.put("orchestratorMode", event.getOrDefault("mode", "complex"));
+            agentMeta.put("orchestratorReason", event.get("reason"));
+            agentMeta.put("subQuestions", event.getOrDefault("tasks", List.of()));
+            return;
+        }
+        List<Map<String, Object>> subtasks = (List<Map<String, Object>>) agentMeta.computeIfAbsent(
+                "subtaskEvents", ignored -> new java.util.ArrayList<Map<String, Object>>());
+        subtasks.add(new java.util.LinkedHashMap<>(event));
+    }
+
+    private static void captureFinalAgentMeta(Map<String, Object> event, Map<String, Object> agentMeta) {
+        if (!"orchestrator".equals(String.valueOf(event.getOrDefault("task_type", "")))) return;
+        agentMeta.put("orchestratorMode", event.getOrDefault("orchestrator_mode", "complex"));
+        agentMeta.put("orchestratorReason", event.get("orchestrator_reason"));
+        agentMeta.put("subQuestions", event.getOrDefault("sub_questions", List.of()));
+        agentMeta.put("subResults", event.getOrDefault("sub_results", List.of()));
+        agentMeta.put("taskLevels", event.getOrDefault("task_levels", List.of()));
+    }
+
     private void saveQaLog(Long userId, Long convId, String question, String answer, String taskType, long duration) {
         QaLog log = new QaLog();
         log.setUserId(userId); log.setConversationId(convId);

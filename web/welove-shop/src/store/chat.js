@@ -17,6 +17,7 @@ function hydrateServerMessage(m) {
     productCards: m.productCards || [],
     confirmCard: m.confirmCard || null,
     cartSelection: m.cartSelection || null,
+    agentMeta: m.agentMeta || m.agent_meta || null,
     taskType: m.taskType || '',
     feedbackType: m.feedbackType || '',
     pending: false,

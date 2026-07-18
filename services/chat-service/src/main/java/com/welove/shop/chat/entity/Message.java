@@ -31,6 +31,9 @@ public class Message implements Serializable {
     private String imageUrl;
     private String sources;
     private String taskType;
+    /** Persisted DAG plan / execution summary for conversation replay. */
+    @TableField(typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> agentMeta;
     private Double importanceScore;
     private String feedbackType;
     private LocalDateTime feedbackTime;

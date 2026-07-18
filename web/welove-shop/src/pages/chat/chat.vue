@@ -32,6 +32,16 @@
             @longpress="onMessageLongpress"
             @retry="retryMessage"
           />
+          <view v-if="msg.role === 'assistant' && msg.agentMeta && msg.agentMeta.orchestratorMode === 'complex'" class="dag-progress">
+            <view class="dag-title">多任务处理{{ msg.streaming ? '中' : '完成' }}</view>
+            <view v-if="msg.agentMeta.taskLevels && msg.agentMeta.taskLevels.length" class="dag-levels">
+              并行层级：{{ formatTaskLevels(msg.agentMeta.taskLevels) }}
+            </view>
+            <view v-for="item in dagItems(msg.agentMeta)" :key="item.task && item.task.id || item.id" class="dag-task">
+              <text class="dag-status" :class="item.status || 'pending'">{{ dagStatusText(item.status) }}</text>
+              <text>{{ (item.task && item.task.question) || item.question || '子任务' }}</text>
+            </view>
+          </view>
           <view v-if="msg.role === 'assistant'" class="cards-under">
             <ChatProductCards
               v-if="msg.productCards && msg.productCards.length"
@@ -447,6 +457,26 @@ export default {
         onConfirm: (card) => { assistant.confirmCard = card || null; this.scrollToBottom() },
         onCartSelection: (card) => { assistant.cartSelection = card || null; this.scrollToBottom() },
         onRouted: (t) => { assistant.taskType = t || '' },
+        onOrchestratorPlan: (plan) => {
+          assistant.taskType = 'orchestrator'
+          assistant.agentMeta = {
+            ...(assistant.agentMeta || {}),
+            orchestratorMode: plan.mode || 'complex',
+            orchestratorReason: plan.reason || '',
+            subQuestions: plan.tasks || [],
+            subtaskEvents: []
+          }
+          this.scrollToBottom()
+        },
+        onOrchestratorSubtask: (event) => {
+          const meta = assistant.agentMeta || { orchestratorMode: 'complex', subtaskEvents: [] }
+          const events = Array.isArray(meta.subtaskEvents) ? [...meta.subtaskEvents] : []
+          const index = events.findIndex(item => String(item.task && item.task.id) === String(event.task && event.task.id))
+          if (index >= 0) events.splice(index, 1, event)
+          else events.push(event)
+          assistant.agentMeta = { ...meta, subtaskEvents: events }
+          this.scrollToBottom()
+        },
         // final 兜底：若某类回复没有逐 token 流（如 unknown/error 静态回复），用 final 的完整答案补上
         onFinalText: (text, finalPayload = {}) => {
           const finalTaskType = finalPayload.task_type || finalPayload.taskType || assistant.taskType
@@ -455,6 +485,16 @@ export default {
           if (Array.isArray(suggested) && suggested.length) {
             this.learnedRecommended = suggested.filter(Boolean)
             this.buildRecommended()
+          }
+          if (finalTaskType === 'orchestrator') {
+            assistant.agentMeta = {
+              ...(assistant.agentMeta || {}),
+              orchestratorMode: finalPayload.orchestrator_mode || 'complex',
+              orchestratorReason: finalPayload.orchestrator_reason || '',
+              subQuestions: finalPayload.sub_questions || [],
+              subResults: finalPayload.sub_results || [],
+              taskLevels: finalPayload.task_levels || []
+            }
           }
           // Orchestrator 会先流出子任务标题/子答案，final.answer 才是完整聚合结果。
           // 不能因为 gotText=true 就丢弃 final，否则前端只能看到拆解标题。
@@ -821,6 +861,7 @@ export default {
         confirmCard: null,
         cartSelection: null,
         taskType: '',
+        agentMeta: null,
         feedbackType: '',
         pending: false,
         streaming: false,
@@ -845,6 +886,7 @@ export default {
         confirmCard: m.confirmCard || null,
         cartSelection: m.cartSelection || null,
         taskType: m.taskType || '',
+        agentMeta: m.agentMeta || m.agent_meta || null,
         feedbackType: m.feedbackType || '',
         pending: false,
         streaming: false,
@@ -861,6 +903,17 @@ export default {
         this.scrollIntoId = ''
         this.$nextTick(() => { this.scrollIntoId = 'msg-bottom' })
       }, 80)
+    },
+    dagStatusText(status) {
+      const labels = { success: '已完成', failed: '失败', blocked: '已阻塞', timeout: '超时', pending: '等待中' }
+      return labels[status] || '处理中'
+    },
+    dagItems(agentMeta = {}) {
+      const events = Array.isArray(agentMeta.subtaskEvents) ? agentMeta.subtaskEvents : []
+      return events.length ? events : (Array.isArray(agentMeta.subResults) ? agentMeta.subResults : [])
+    },
+    formatTaskLevels(levels) {
+      return Array.isArray(levels) ? levels.map(level => Array.isArray(level) ? level.join('、') : '').filter(Boolean).join(' → ') : ''
     }
   }
 }
@@ -920,6 +973,20 @@ export default {
   gap: 16rpx;
   margin: -12rpx 0 26rpx 78rpx;
 }
+.dag-progress {
+  margin: 10rpx 0 18rpx 78rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 14rpx;
+  background: #ecfdf5;
+  border: 1rpx solid #a7f3d0;
+  color: #166534;
+  font-size: 23rpx;
+}
+.dag-title { font-weight: 700; }
+.dag-levels { margin-top: 6rpx; color: #047857; }
+.dag-task { display: flex; gap: 10rpx; margin-top: 8rpx; }
+.dag-status { min-width: 72rpx; color: #0f766e; }
+.dag-status.failed, .dag-status.timeout, .dag-status.blocked { color: #dc2626; }
 .bottom-anchor {
   height: 8rpx;
 }
