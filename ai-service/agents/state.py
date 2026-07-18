@@ -27,6 +27,11 @@ class AssistantState(TypedDict):
     # active_subtask.use_image=true 才能消费图片，避免图片污染知识子任务。
     # TODO(base64): 后续如支持前端直传 base64，会先上传到 OSS 转成 URL 再进这个字段。
     image_url: NotRequired[str]
+    # Canonical recent messages and their persisted presentation artifacts are
+    # supplied by chat-service on every turn.  They are not LangGraph messages:
+    # ContextResolver consumes the structured cards/image metadata first.
+    conversation_history: NotRequired[list[dict[str, Any]]]
+    context_resolution: NotRequired[dict[str, Any]]
 
     # ── 路由节点产出 ──
     route: NotRequired[str]

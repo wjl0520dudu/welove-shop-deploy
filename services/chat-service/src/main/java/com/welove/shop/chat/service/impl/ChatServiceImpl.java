@@ -169,7 +169,10 @@ public class ChatServiceImpl implements ChatService {
                 // retry=true 时跳过 dedup 检查 (前端点「重新生成」会用相同的 content),
                 // 同时跳过 saveUserMessage 避免历史里出现重复 user msg。
                 if (!retry && isDuplicate(conversationId, content)) { emitter.complete(); return; }
-                if (!retry) saveUserMessage(conversationId, content);
+                if (!retry) {
+                    Message userMsg = saveUserMessage(conversationId, content);
+                    ctxService.updateConversationContext(conversationId, userId, userMsg);
+                }
                 if (!retry && isFirstMessage(conversationId)) aiService.generateTitle(conversationId, content);
 
                 // 拼 AI 请求体 —— 对齐 ai-service /api/assistant/stream 的 ChatRequest schema
@@ -177,6 +180,7 @@ public class ChatServiceImpl implements ChatService {
                 aiBody.put("question", content);
                 aiBody.put("conversation_id", conversationId.toString());
                 aiBody.put("user_id", userId.toString());
+                aiBody.put("conversation_history", buildConversationHistory(conversationId));
                 aiBody.put("username", username);
                 aiBody.put("is_admin", false);
                 if (jwtToken != null) aiBody.put("jwt_token", jwtToken);
@@ -402,7 +406,10 @@ public class ChatServiceImpl implements ChatService {
                 String dedupKey = "[MM]" + safeContent + "|" + imageUrl;
                 if (!retry && isDuplicate(conversationId, dedupKey)) { emitter.complete(); return; }
                 // MM-DIFF-3:落 user 消息时带 imageUrl
-                if (!retry) saveUserMessage(conversationId, safeContent, imageUrl);
+                if (!retry) {
+                    Message userMsg = saveUserMessage(conversationId, safeContent, imageUrl);
+                    ctxService.updateConversationContext(conversationId, userId, userMsg);
+                }
                 if (!retry && isFirstMessage(conversationId)) {
                     // 纯图搜索没有 content,用占位符生成标题;LLM 侧看到 [图片] 会尝试生成"图片搜索"类标题
                     aiService.generateTitle(conversationId, safeContent.isEmpty() ? "[图片]" : safeContent);
@@ -413,6 +420,7 @@ public class ChatServiceImpl implements ChatService {
                 aiBody.put("image_url", imageUrl);  // MM-DIFF-1
                 aiBody.put("conversation_id", conversationId.toString());
                 aiBody.put("user_id", userId.toString());
+                aiBody.put("conversation_history", buildConversationHistory(conversationId));
                 aiBody.put("username", username);
                 aiBody.put("is_admin", false);
                 if (jwtToken != null) aiBody.put("jwt_token", jwtToken);
@@ -721,6 +729,29 @@ public class ChatServiceImpl implements ChatService {
         List<Map<String, Object>> subtasks = (List<Map<String, Object>>) agentMeta.computeIfAbsent(
                 "subtaskEvents", ignored -> new java.util.ArrayList<Map<String, Object>>());
         subtasks.add(new java.util.LinkedHashMap<>(event));
+    }
+
+    /**
+     * Provide AI with the same persisted message window used by conversation
+     * replay. Product cards and image URLs are turn artifacts, so a follow-up
+     * such as "这两款对比" can bind to the exact preceding response instead of
+     * a mutable global last_product_cards cache.
+     */
+    private List<Map<String, Object>> buildConversationHistory(Long conversationId) {
+        List<Message> messages = ctxService.getConversationContext(conversationId, 0);
+        List<Map<String, Object>> history = new java.util.ArrayList<>();
+        for (Message message : messages) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("id", message.getId());
+            item.put("role", message.getRole());
+            item.put("content", message.getContent());
+            item.put("image_url", message.getImageUrl());
+            item.put("product_cards", message.getProductCards());
+            item.put("task_type", message.getTaskType());
+            item.put("agent_meta", message.getAgentMeta());
+            history.add(item);
+        }
+        return history;
     }
 
     private static void captureFinalAgentMeta(Map<String, Object> event, Map<String, Object> agentMeta) {

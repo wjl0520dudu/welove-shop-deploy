@@ -17,6 +17,7 @@ from agents.prompts import ORCHESTRATOR_PROMPT, ROUTER_PROMPT
 from agents.state import AssistantState
 from agents import runtime as _runtime  # 用模块引用，运行时动态读 checkpointer/store
 from assistant.nodes import make_nodes
+from assistant.context_resolver import resolve_turn_context
 from assistant.orchestration import (
     PlanValidationError,
     TaskEvidence,
@@ -69,6 +70,7 @@ class AssistantGraph:
 
     def _build(self):
         g = StateGraph(AssistantState)
+        g.add_node("resolve_context", self._resolve_context)
         g.add_node("analyze_request", self._analyze_request)
         g.add_node("route_intent", self._route)
         g.add_node("shopping", self._nodes["shopping_node"])
@@ -79,7 +81,8 @@ class AssistantGraph:
         g.add_node("synthesize_final", self._synthesize_final)
         g.add_node("format_response", self._nodes["format_response"])
 
-        g.add_edge(START, "analyze_request")
+        g.add_edge(START, "resolve_context")
+        g.add_edge("resolve_context", "analyze_request")
         g.add_conditional_edges(
             "analyze_request",
             self._after_analyze,
@@ -96,9 +99,38 @@ class AssistantGraph:
         # 从 runtime 模块动态读，确保拿到的是 init_runtime() 覆盖后的实例
         return g.compile(checkpointer=_runtime.checkpointer, store=_runtime.store)
 
+    async def _resolve_context(self, state: AssistantState) -> dict:
+        """Build one scoped, turn-level context before routing.
+
+        Product cards in chat history are persisted UI artifacts and therefore
+        more reliable than the single mutable Store slot.  The resolver writes
+        only a state-local snapshot; it never overwrites durable memory merely
+        because a user asked a follow-up.
+        """
+        try:
+            persisted = await get_business_memory(
+                state.get("conversation_id"), state.get("user_id"),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("context resolver: business memory unavailable", exc_info=True)
+            persisted = {}
+        resolved = resolve_turn_context(
+            question=state.get("question", ""),
+            conversation_history=state.get("conversation_history") or [],
+            business_memory={**persisted, **dict(state.get("business_memory") or {})},
+        )
+        return resolved
+
     async def _analyze_request(self, state: AssistantState) -> dict:
         """判断本轮是否需要 Orchestrator，并在需要时生成任务议程。"""
         question = state.get("question") or ""
+        resolution = state.get("context_resolution") or {}
+        if resolution.get("needs_clarification"):
+            return {
+                "original_question": question,
+                "orchestrator_mode": "simple",
+                "orchestrator_reason": "上下文指代不唯一，先澄清商品集合",
+            }
         if not question.strip():
             return {
                 "original_question": question,
@@ -638,6 +670,15 @@ class AssistantGraph:
 
     async def _route(self, state: AssistantState) -> dict:
         question = (state.get("question") or "").strip()
+        resolution = state.get("context_resolution") or {}
+        if resolution.get("needs_clarification"):
+            return _route_result(
+                route="unknown",
+                confidence=1.0,
+                source="context_resolver",
+                reason="上下文中的商品指代不唯一",
+                clarification=str(resolution.get("clarification") or clarification_for_low_confidence(question)),
+            )
 
         active_task = state.get("active_subtask") or {}
         image_url = (state.get("image_url") or "").strip()
@@ -827,6 +868,9 @@ class AssistantGraph:
         # 让 checkpointer / summarization middleware 能有内容处理；
         # 若 question 非空，直接透传给 HumanMessage。
         human_content = question.strip() or "[用户上传了一张图片，未附文字说明]"
+        conversation_history = _normalize_conversation_history(
+            kwargs.get("conversation_history") or [], question, image_url,
+        )
         state: AssistantState = {
             "question": question,
             "conversation_id": kwargs.get("conversation_id"),
@@ -864,7 +908,11 @@ class AssistantGraph:
             "suggested_questions": [],
             "run_id": run_id,
             "trace_id": trace_id,
-            "messages": [HumanMessage(content=human_content)],
+            "conversation_history": conversation_history,
+            "context_resolution": {},
+            # The model sees a bounded real history; structured card/image
+            # artifacts remain available to ContextResolver separately.
+            "messages": _history_to_messages(conversation_history) or [HumanMessage(content=human_content)],
             "error": False,
             "error_code": None,
             "message": None,
@@ -1080,10 +1128,6 @@ class AssistantGraph:
                     "heading": node_output.get("subtask_heading"),
                 },
             }
-            yield {
-                "type": "token",
-                "data": {"content": node_output.get("subtask_heading")},
-            }
 
         if node_name == "execute_dag" and node_output.get("sub_results"):
             sub_results = node_output.get("sub_results") or []
@@ -1106,10 +1150,8 @@ class AssistantGraph:
                         "error_code": result.get("error_code"),
                     },
                 }
-            yield {
-                "type": "token",
-                "data": {"content": _build_orchestrator_answer(sub_results)},
-            }
+            # Keep DAG telemetry out of the user token stream.  The only user
+            # facing answer for a complex request is the final synthesized one.
 
         # 2. 子节点消息里可能含 ToolMessage（工具返回）—— 用于 tool_result
         # 主图节点自己不会直接调工具，工具都在子图（ShoppingAgent 等）内部。
@@ -1300,6 +1342,56 @@ def _dedupe_sources(sources_iter) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(source)
     return out
+
+
+def _normalize_conversation_history(
+    raw_history: list[Any], question: str, image_url: str | None,
+) -> list[dict[str, Any]]:
+    """Normalize Java message DTOs and retain only the recent bounded window."""
+    out: list[dict[str, Any]] = []
+    for item in raw_history[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "")
+        if role not in {"user", "assistant", "system"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content and not item.get("image_url"):
+            continue
+        out.append({
+            "id": item.get("id"),
+            "role": role,
+            "content": content,
+            "image_url": item.get("image_url") or item.get("imageUrl") or "",
+            "product_cards": item.get("product_cards") or item.get("productCards") or [],
+            "task_type": item.get("task_type") or item.get("taskType") or "",
+            "agent_meta": item.get("agent_meta") or item.get("agentMeta") or {},
+        })
+    # Direct callers/tests may not be chat-service.  Keep current turn present
+    # exactly once in that case.
+    if not out or out[-1].get("role") != "user" or out[-1].get("content") != (question or "").strip():
+        out.append({"role": "user", "content": (question or "").strip(), "image_url": image_url or ""})
+    return out[-12:]
+
+
+def _history_to_messages(history: list[dict[str, Any]]) -> list:
+    """Convert the textual portion of persisted history into LangChain messages."""
+    messages: list = []
+    for item in history:
+        content = str(item.get("content") or "").strip()
+        if item.get("image_url") and not content:
+            content = "[用户上传了一张图片]"
+        if not content:
+            continue
+        message_id = str(item.get("id")) if item.get("id") is not None else None
+        role = item.get("role")
+        if role == "user":
+            messages.append(HumanMessage(content=content, id=message_id))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content, id=message_id))
+        elif role == "system":
+            messages.append(SystemMessage(content=content, id=message_id))
+    return messages
 
 
 def _collect_tags(meta: Dict[str, Any]) -> set[str]:

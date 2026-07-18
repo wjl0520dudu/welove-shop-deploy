@@ -7,7 +7,7 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from agents.state import AssistantState
-from agents.memory import get_business_memory
+from agents.memory import get_business_memory, remember_product_cards
 from agents.preferences import build_preference_questions
 from agents.prompts import CHITCHAT_PROMPT
 from core.errors import ErrorCode
@@ -260,6 +260,17 @@ def make_nodes(llm, shopping_agent: Optional[ShoppingAgent] = None,
                 top_k=5,
                 business_memory=business_memory,
             )
+            # Make image retrieval behave exactly like text recommendation on
+            # the next turn.  Without this, "这两款对比" falls back to stale
+            # cards produced by an earlier text-only recommendation.
+            if result.get("product_cards"):
+                try:
+                    await remember_product_cards(
+                        state.get("conversation_id"), state.get("user_id"),
+                        result["product_cards"],
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("multimodal product cards memory write failed", exc_info=True)
             return _merge_result(
                 result,
                 task_type="shopping",

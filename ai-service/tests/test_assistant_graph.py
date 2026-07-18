@@ -334,11 +334,12 @@ def test_orchestrator_prepare_subtask_stream_heading():
         ):
             events.append(event)
 
+        assert len(events) == 1
         assert events[0]["type"] == "orchestrator_subtask"
-        assert events[1] == {
-            "type": "token",
-            "data": {"content": "我会分成几个部分依次回答：\n\n1. 给我推荐防晒\n"},
-        }
+        assert events[0]["data"]["task"]["id"] == "t1"
+        assert "给我推荐防晒" in events[0]["data"]["heading"]
+        # subtask heading must NOT be emitted as a token event
+        assert all(e["type"] != "token" for e in events)
     asyncio.run(run())
 
 
@@ -364,10 +365,10 @@ def test_orchestrator_execute_dag_streams_ordered_results():
             events.append(event)
 
         assert [event["type"] for event in events] == [
-            "orchestrator_subtask", "orchestrator_subtask", "token",
+            "orchestrator_subtask", "orchestrator_subtask",
         ]
-        assert "1. 问题一" in events[-1]["data"]["content"]
-        assert "2. 问题二" in events[-1]["data"]["content"]
+        # DAG subtask detail must NOT be emitted as token events
+        assert all(e["type"] != "token" for e in events)
     asyncio.run(run())
 
 

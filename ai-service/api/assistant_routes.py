@@ -70,6 +70,7 @@ async def run_assistant(request: AssistantRunRequest, http_request: Request) -> 
             gender=request.gender,
             skin_type=request.skin_type,
             preference_tags=request.preference_tags,
+            conversation_history=request.conversation_history,
             trace_id=trace_id,
         )
     except Exception:
@@ -135,6 +136,7 @@ async def stream_assistant(request: AssistantRunRequest, http_request: Request):
                 gender=request.gender,
                 skin_type=request.skin_type,
                 preference_tags=request.preference_tags,
+                conversation_history=request.conversation_history,
                 trace_id=trace_id,
             ):
                 # 客户端断开后提前停 LLM,避免空跑 token
@@ -312,6 +314,7 @@ async def run_multimodal_assistant(
             preference_tags=request.preference_tags,
             trace_id=trace_id,
             image_url=image_url,
+            conversation_history=request.conversation_history,
         )
     except MultimodalImageError as e:
         # 第二道防线：HEAD 通过但 DashScope 拒识别（图片格式非法 / CDN 拒绝
@@ -382,6 +385,7 @@ async def stream_multimodal_assistant(
                 preference_tags=request.preference_tags,
                 trace_id=trace_id,
                 image_url=image_url,
+                conversation_history=request.conversation_history,
             ):
                 if await http_request.is_disconnected():
                     logger.info(

@@ -32,7 +32,9 @@
             @longpress="onMessageLongpress"
             @retry="retryMessage"
           />
-          <view v-if="msg.role === 'assistant' && msg.agentMeta && msg.agentMeta.orchestratorMode === 'complex'" class="dag-progress">
+          <!-- DAG execution details are persisted for diagnostics but deliberately
+               not displayed in the end-user conversation. -->
+          <view v-if="false" class="dag-progress">
             <view class="dag-title">多任务处理{{ msg.streaming ? '中' : '完成' }}</view>
             <view v-if="msg.agentMeta.taskLevels && msg.agentMeta.taskLevels.length" class="dag-levels">
               并行层级：{{ formatTaskLevels(msg.agentMeta.taskLevels) }}
@@ -457,26 +459,9 @@ export default {
         onConfirm: (card) => { assistant.confirmCard = card || null; this.scrollToBottom() },
         onCartSelection: (card) => { assistant.cartSelection = card || null; this.scrollToBottom() },
         onRouted: (t) => { assistant.taskType = t || '' },
-        onOrchestratorPlan: (plan) => {
-          assistant.taskType = 'orchestrator'
-          assistant.agentMeta = {
-            ...(assistant.agentMeta || {}),
-            orchestratorMode: plan.mode || 'complex',
-            orchestratorReason: plan.reason || '',
-            subQuestions: plan.tasks || [],
-            subtaskEvents: []
-          }
-          this.scrollToBottom()
-        },
-        onOrchestratorSubtask: (event) => {
-          const meta = assistant.agentMeta || { orchestratorMode: 'complex', subtaskEvents: [] }
-          const events = Array.isArray(meta.subtaskEvents) ? [...meta.subtaskEvents] : []
-          const index = events.findIndex(item => String(item.task && item.task.id) === String(event.task && event.task.id))
-          if (index >= 0) events.splice(index, 1, event)
-          else events.push(event)
-          assistant.agentMeta = { ...meta, subtaskEvents: events }
-          this.scrollToBottom()
-        },
+        // The plan and subtask events are diagnostic telemetry, not chat UI.
+        onOrchestratorPlan: () => {},
+        onOrchestratorSubtask: () => {},
         // final 兜底：若某类回复没有逐 token 流（如 unknown/error 静态回复），用 final 的完整答案补上
         onFinalText: (text, finalPayload = {}) => {
           const finalTaskType = finalPayload.task_type || finalPayload.taskType || assistant.taskType

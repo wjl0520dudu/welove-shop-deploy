@@ -34,6 +34,10 @@ class ChatRequest(BaseModel):
     # 有值时 shopping 意图走多模态检索链路；无值时走原文本 hybrid_search。
     # TODO(base64): 如需支持 base64，前端应先转 URL；此处不接 base64，避免大 payload 传输。
     image_url: Optional[str] = Field(None, description="Single reference image URL for multimodal shopping")
+    conversation_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Recent persisted messages with product/image artifacts, supplied by chat-service",
+    )
 
 
 class AgentRunRequest(BaseModel):
