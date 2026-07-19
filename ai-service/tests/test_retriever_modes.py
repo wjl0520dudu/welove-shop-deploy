@@ -20,13 +20,13 @@ class TestRetrieverRouting:
     不再手工判断 hybrid_search 走哪个方法。"""
 
     def _make_retriever_with_mock_store(self):
-        from rag.retriever import Retriever
+        from app.infrastructure.retrieval.retriever import Retriever
         mock_store = MagicMock()
         mock_store.search.return_value = []  # 不关心结果，看它是否被调用
         return Retriever(vector_store=mock_store), mock_store
 
     def test_dense_mode_calls_search_with_dense(self):
-        from rag.models import RetrievalPlan
+        from app.domain.knowledge.models import RetrievalPlan
         retriever, store = self._make_retriever_with_mock_store()
         retriever.retrieve(RetrievalPlan(query="补水精华", search_mode="dense"))
         store.search.assert_called_once()
@@ -35,14 +35,14 @@ class TestRetrieverRouting:
         assert req.query == "补水精华"
 
     def test_bm25_mode_calls_search_with_bm25(self):
-        from rag.models import RetrievalPlan
+        from app.domain.knowledge.models import RetrievalPlan
         retriever, store = self._make_retriever_with_mock_store()
         retriever.retrieve(RetrievalPlan(query="视黄醇", search_mode="bm25"))
         store.search.assert_called_once()
         assert store.search.call_args.args[0].search_mode == "bm25"
 
     def test_hybrid_default(self):
-        from rag.models import RetrievalPlan
+        from app.domain.knowledge.models import RetrievalPlan
         retriever, store = self._make_retriever_with_mock_store()
         retriever.retrieve(RetrievalPlan(query="烟酰胺功效"))  # 不指定 search_mode
         store.search.assert_called_once()
@@ -58,14 +58,14 @@ class TestVectorStoreSearchDispatch:
 
     def _make_store_skipping_connect(self):
         """构造 MilvusVectorStore 但跳过真实的 _connect（不需要真 Milvus）。"""
-        from rag.vector_store import MilvusVectorStore
+        from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
         with patch.object(MilvusVectorStore, "_connect", lambda self: None), \
              patch("rag.vector_store.get_embeddings", return_value=MagicMock()):
             store = MilvusVectorStore(collection_name="__test__")
         return store
 
     def test_dense_dispatch(self):
-        from rag.models import SearchRequest
+        from app.domain.knowledge.models import SearchRequest
         store = self._make_store_skipping_connect()
         store.dense_search = MagicMock(return_value=[])
         store.bm25_search = MagicMock(return_value=[])
@@ -77,7 +77,7 @@ class TestVectorStoreSearchDispatch:
         store.hybrid_search.assert_not_called()
 
     def test_bm25_dispatch(self):
-        from rag.models import SearchRequest
+        from app.domain.knowledge.models import SearchRequest
         store = self._make_store_skipping_connect()
         store.dense_search = MagicMock(return_value=[])
         store.bm25_search = MagicMock(return_value=[])
@@ -90,7 +90,7 @@ class TestVectorStoreSearchDispatch:
 
     def test_sparse_alias_dispatch_to_bm25(self):
         """search_mode='sparse' 也应走 bm25_search（历史别名兼容）。"""
-        from rag.models import SearchRequest
+        from app.domain.knowledge.models import SearchRequest
         store = self._make_store_skipping_connect()
         store.dense_search = MagicMock(return_value=[])
         store.bm25_search = MagicMock(return_value=[])
@@ -100,7 +100,7 @@ class TestVectorStoreSearchDispatch:
         store.bm25_search.assert_called_once()
 
     def test_hybrid_dispatch(self):
-        from rag.models import SearchRequest
+        from app.domain.knowledge.models import SearchRequest
         store = self._make_store_skipping_connect()
         store.dense_search = MagicMock(return_value=[])
         store.bm25_search = MagicMock(return_value=[])
@@ -111,7 +111,7 @@ class TestVectorStoreSearchDispatch:
 
     def test_unknown_mode_falls_back_to_hybrid(self):
         """脏值（如 None、""、"foo"）都应兜底到 hybrid，绝不抛异常。"""
-        from rag.models import SearchRequest
+        from app.domain.knowledge.models import SearchRequest
         store = self._make_store_skipping_connect()
         store.dense_search = MagicMock(return_value=[])
         store.bm25_search = MagicMock(return_value=[])
@@ -137,7 +137,7 @@ class TestSearchKnowledgeToolValidation:
     @staticmethod
     def _make_fake_output():
         """构造一个带高分 source 的 fake RetrievalOutput，避免触发博查兜底。"""
-        from rag.models import Source
+        from app.domain.knowledge.models import Source
         fake = MagicMock()
         fake.knowledge_context = "ctx"
         fake.sources = [Source(doc="test doc", score=0.9)]
@@ -146,7 +146,7 @@ class TestSearchKnowledgeToolValidation:
 
     @pytest.mark.asyncio
     async def test_valid_mode_passthrough(self):
-        from knowledge.agent import search_knowledge
+        from app.domain.knowledge import search_knowledge
         fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output
@@ -155,7 +155,7 @@ class TestSearchKnowledgeToolValidation:
 
     @pytest.mark.asyncio
     async def test_invalid_mode_falls_back_to_hybrid(self):
-        from knowledge.agent import search_knowledge
+        from app.domain.knowledge import search_knowledge
         fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output
@@ -164,7 +164,7 @@ class TestSearchKnowledgeToolValidation:
 
     @pytest.mark.asyncio
     async def test_default_mode_is_hybrid(self):
-        from knowledge.agent import search_knowledge
+        from app.domain.knowledge import search_knowledge
         fake_output = self._make_fake_output()
         with patch("knowledge.agent.get_retriever") as gr:
             gr.return_value.retrieve.return_value = fake_output

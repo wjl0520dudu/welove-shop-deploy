@@ -22,16 +22,15 @@ import time
 import uuid
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.llm import get_llm                     # noqa: E402
-from agents.runtime import init_runtime          # noqa: E402
-from assistant.graph import AssistantGraph       # noqa: E402
-from shopping.agent import ShoppingAgent         # noqa: E402
-from knowledge.agent import KnowledgeAgent       # noqa: E402
-from agents.memory import get_business_memory    # noqa: E402
+from app.infrastructure.llm.llm import get_llm                     # noqa: E402
+from app.infrastructure.persistence.runtime import init_runtime          # noqa: E402
+from app.application.assistant import AssistantGraph       # noqa: E402
+from app.domain.shopping.agent import ShoppingAgent         # noqa: E402
+from app.domain.knowledge import KnowledgeAgent       # noqa: E402
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 try:

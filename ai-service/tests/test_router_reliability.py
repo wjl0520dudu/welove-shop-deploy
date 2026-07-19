@@ -1,8 +1,8 @@
 import asyncio
 
-from agents.schemas import IntentDecision
-from assistant.graph import AssistantGraph
-from assistant.router import (
+from app.application.assistant.schemas import IntentDecision
+from app.application.assistant import AssistantGraph
+from app.application.assistant.router import (
     can_short_circuit_orchestrator,
     classify_high_confidence_rule,
     normalize_llm_decision,

@@ -2,21 +2,21 @@ from datetime import datetime, timedelta, timezone
 import asyncio
 from unittest.mock import AsyncMock
 
-from agents.preferences import (
+from app.domain.shopping.preferences import (
     active_preference_facts,
     build_preference_questions,
     make_preference_fact,
     merge_preference_facts,
 )
-from shopping.personalization import (
+from app.domain.shopping.personalization import (
     apply_user_preferences,
     facts_from_shopping_need,
     personalized_rerank_candidates,
 )
-from shopping.ranking import ProductRanker
-from shopping.schemas import ShoppingNeed
+from app.domain.shopping.ranking import ProductRanker
+from app.domain.shopping.schemas import ShoppingNeed
 from evals.preference_metrics import ndcg_at_k, preference_compliance_at_k
-from assistant.graph import AssistantGraph
+from app.application.assistant import AssistantGraph
 
 
 def _prefs(*facts, **legacy):

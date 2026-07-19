@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from assistant.graph import AssistantGraph
+from app.application.assistant import AssistantGraph
 
 
 async def _collect_events(chunk, meta=None, namespace=()):

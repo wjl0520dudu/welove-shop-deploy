@@ -6,19 +6,18 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import time
 import uuid
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.llm import get_llm                                # noqa: E402
-from shopping.agent import ShoppingAgent                    # noqa: E402
-from agents.memory import clear_pending_shopping_need       # noqa: E402
+from app.infrastructure.llm.llm import get_llm                                # noqa: E402
+from app.domain.shopping.agent import ShoppingAgent                    # noqa: E402
+from app.infrastructure.persistence.memory import clear_pending_shopping_need       # noqa: E402
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

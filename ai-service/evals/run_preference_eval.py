@@ -13,9 +13,9 @@ from evals.preference_metrics import (
     preference_compliance_at_k,
     summarize_preference_eval,
 )
-from shopping.personalization import apply_user_preferences
-from shopping.ranking import ProductRanker
-from shopping.schemas import ShoppingNeed
+from app.domain.shopping.personalization import apply_user_preferences
+from app.domain.shopping.ranking import ProductRanker
+from app.domain.shopping.schemas import ShoppingNeed
 
 DEFAULT_DATASET = Path(__file__).parent / "datasets" / "preference_cases.jsonl"
 

@@ -30,8 +30,8 @@ from typing import Any, Dict, Iterable, List, Tuple
 # 让脚本能直接跑
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rag.models import ChunkMetadata, DocumentChunk  # noqa: E402
-from rag.vector_store import create_vector_store  # noqa: E402
+from app.domain.knowledge.models import ChunkMetadata, DocumentChunk  # noqa: E402
+from app.infrastructure.vectorstores.knowledge.vector_store import create_vector_store  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

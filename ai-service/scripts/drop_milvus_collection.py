@@ -19,7 +19,7 @@ from pathlib import Path
 # 让脚本能直接 `python scripts/drop_milvus_collection.py` 起来
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.config import config  # noqa: E402
+from app.infrastructure.config import config  # noqa: E402
 from pymilvus import connections, MilvusClient  # noqa: E402
 
 

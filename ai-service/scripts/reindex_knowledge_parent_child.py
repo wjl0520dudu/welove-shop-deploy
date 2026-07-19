@@ -33,10 +33,10 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.config import config  # noqa: E402
-from rag.document_pipeline import build_chunks_from_text  # noqa: E402
-from rag.models import DocumentChunk  # noqa: E402
-from rag.vector_store import create_vector_store  # noqa: E402
+from app.infrastructure.config import config  # noqa: E402
+from app.domain.knowledge.document_pipeline import build_chunks_from_text  # noqa: E402
+from app.domain.knowledge.models import DocumentChunk  # noqa: E402
+from app.infrastructure.vectorstores.knowledge.vector_store import create_vector_store  # noqa: E402
 from scripts.ingest_general_knowledge import DOCUMENTS  # noqa: E402
 from scripts.ingest_knowledge_v2 import (  # noqa: E402
     _product_id_to_int,

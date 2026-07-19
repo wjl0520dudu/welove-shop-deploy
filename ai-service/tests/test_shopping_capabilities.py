@@ -10,10 +10,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from shopping.capabilities.compare import CompareCapability, _extract_focus as extract_compare_focus
-from shopping.capabilities.detail import DetailCapability, _extract_focus as extract_detail_focus
-from shopping.schemas import ShoppingContext
-from tools.shopping_tools import ProductFeatures
+from app.domain.shopping.capabilities.compare import CompareCapability, _extract_focus as extract_compare_focus
+from app.domain.shopping.capabilities.detail import DetailCapability, _extract_focus as extract_detail_focus
+from app.domain.shopping.schemas import ShoppingContext
+from app.domain.shopping.tools.shopping_tools import ProductFeatures
 
 
 def _ctx(**kwargs):

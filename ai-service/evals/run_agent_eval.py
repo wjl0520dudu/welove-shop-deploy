@@ -29,7 +29,7 @@ from uuid import uuid4
 
 import httpx
 
-from core.config import config
+from app.infrastructure.config import config
 from evals.agent_contract import validate_agent_contract
 from evals.agent_judges import (
     evaluate_with_deepeval,
@@ -264,8 +264,8 @@ async def _prepare_direct_conversation(
 
 async def collect_direct_results(cases: list[dict[str, Any]], timeout_seconds: float) -> dict[str, dict[str, Any]]:
     """Execute the Graph in-process so raw retrieval contexts remain available."""
-    from assistant.graph import AssistantGraph
-    from core.llm import get_llm
+    from app.application.assistant import AssistantGraph
+    from app.infrastructure.llm.llm import get_llm
 
     llm = get_llm()
     if llm is None:

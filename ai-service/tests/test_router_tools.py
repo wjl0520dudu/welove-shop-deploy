@@ -4,9 +4,7 @@
 """
 from __future__ import annotations
 
-import pytest
-
-from tools.router_tools import (
+from app.application.assistant.router_tools import (
     detect_compound_intent,
     format_business_memory_for_router,
 )

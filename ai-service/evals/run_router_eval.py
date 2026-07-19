@@ -18,10 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from assistant.graph import AssistantGraph
-from assistant.router import classify_high_confidence_rule
-from core.config import config
-from core.llm import get_llm
+from app.application.assistant import AssistantGraph
+from app.application.assistant.router import classify_high_confidence_rule
+from app.infrastructure.config import config
+from app.infrastructure.llm.llm import get_llm
 from evals.router_metrics import calculate_router_metrics
 
 DEFAULT_DATASET = Path(__file__).parent / "datasets" / "router_cases.jsonl"

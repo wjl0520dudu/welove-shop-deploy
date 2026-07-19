@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from shopping.retrieval import (
+from app.domain.shopping.retrieval import (
     ShoppingRetriever,
     _dedupe_by_product_id,
     _pick_search_mode,
@@ -18,7 +18,7 @@ from shopping.retrieval import (
     _tag_recall_source,
     build_retrieval_plan,
 )
-from shopping.schemas import ShoppingNeed, ShoppingRetrievalPlan
+from app.domain.shopping.schemas import ShoppingNeed, ShoppingRetrievalPlan
 
 
 # ---- build_retrieval_plan ------------------------------------------------

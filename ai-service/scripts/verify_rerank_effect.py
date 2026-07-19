@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rag.models import RetrievalPlan  # noqa: E402
-from rag.retriever import get_retriever  # noqa: E402
+from app.domain.knowledge.models import RetrievalPlan  # noqa: E402
+from app.infrastructure.retrieval.retriever import get_retriever  # noqa: E402
 
 QUERIES = [
     "视黄醇和烟酰胺可以一起用吗",     # 通用成分搭配（rerank 应把成分文档拱到最前）

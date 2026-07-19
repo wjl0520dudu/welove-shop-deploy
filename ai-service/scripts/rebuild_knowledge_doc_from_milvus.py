@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Set
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.database import get_session_factory
-from pymilvus import Collection, connections, utility
+from app.infrastructure.persistence.database import get_session_factory
+from pymilvus import Collection, connections
 from sqlalchemy import text
 
 

@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from rag.vector_store import MilvusVectorStore
+from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
 
 
 def main():

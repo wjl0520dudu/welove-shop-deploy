@@ -1,5 +1,5 @@
-from shopping.category_resolver import normalize_product_category
-from shopping.multimodal_search import extract_explicit_product_filters
+from app.domain.shopping.category_resolver import normalize_product_category
+from app.domain.shopping.multimodal_search import extract_explicit_product_filters
 
 
 def test_catalog_aliases_normalize_to_existing_sub_categories():

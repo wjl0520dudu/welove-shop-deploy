@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from shopping.vector_store import (
+from app.infrastructure.vectorstores.product.vector_store import (
     INSERT_FIELDS,
     OUTPUT_FIELDS,
     ProductMilvusStore,

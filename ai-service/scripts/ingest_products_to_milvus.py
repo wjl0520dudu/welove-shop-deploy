@@ -61,7 +61,7 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from shopping.vector_store import get_product_milvus_store   # noqa: E402
+from app.infrastructure.vectorstores.product.vector_store import get_product_milvus_store   # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
 logger = logging.getLogger("ingest_products")

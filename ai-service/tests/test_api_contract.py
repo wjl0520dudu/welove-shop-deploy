@@ -8,10 +8,9 @@
 """
 import json
 
-from api.schemas import AIResponse
-from api.response_adapter import (
+from app.api.schemas import AIResponse
+from app.api.response_adapter import (
     build_error_response,
-    model_to_dict,
     normalize_ai_response,
     parse_stream_event,
     sse_event,

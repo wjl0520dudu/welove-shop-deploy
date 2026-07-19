@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pymilvus import MilvusClient   # noqa: E402
 
-from core.config import config       # noqa: E402
+from app.infrastructure.config import config       # noqa: E402
 
 
 def main() -> None:

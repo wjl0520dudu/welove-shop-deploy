@@ -63,7 +63,7 @@ class TestOrdinalReference:
     """测试序号指代：第一个、第二款、最后一个、倒数第一个。"""
 
     def test_second_matches_index_1(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -80,7 +80,7 @@ class TestOrdinalReference:
         assert "「粉底液B」" in result["resolved_query"]
 
     def test_last_one_matches_end(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -96,7 +96,7 @@ class TestOrdinalReference:
         assert result["matched_product"]["product_id"] == 3
 
     def test_reverse_ordinal(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -111,7 +111,7 @@ class TestOrdinalReference:
         assert result["matched_product"]["product_id"] == 2  # 倒数第2 = index -2 = 粉底液B
 
     def test_out_of_range_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -125,7 +125,7 @@ class TestOrdinalReference:
         assert result["has_reference"] is False
 
     def test_no_cards_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -145,7 +145,7 @@ class TestPronominalReference:
     """测试代词指代：刚才那个、这个、它。"""
 
     def test_prefer_focused_product(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -162,7 +162,7 @@ class TestPronominalReference:
         assert result["matched_product"]["product_id"] == 2
 
     def test_fallback_to_first_card_when_no_focused(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -178,7 +178,7 @@ class TestPronominalReference:
         assert result["matched_product"]["product_id"] == 1  # cards[0]
 
     def test_no_memory_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -198,7 +198,7 @@ class TestComparativeReference:
     """测试比较指代：更便宜的、评分高的、销量多的。"""
 
     def test_cheaper_picks_min_price(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -215,7 +215,7 @@ class TestComparativeReference:
         assert result["matched_product"]["product_id"] == 3
 
     def test_higher_rating_picks_max_rating(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -232,7 +232,7 @@ class TestComparativeReference:
         assert result["matched_product"]["product_id"] == 2
 
     def test_more_sales_picks_max_sales(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -248,7 +248,7 @@ class TestComparativeReference:
         assert result["matched_product"]["product_id"] == 3
 
     def test_more_expensive_picks_max_price(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -270,7 +270,7 @@ class TestImplicitReference:
     """测试隐式指代：还有别的颜色吗、多少钱等，指向 last_focused_product。"""
 
     def test_ask_price_implicitly_matches_focused(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -286,7 +286,7 @@ class TestImplicitReference:
         assert result["matched_product"]["product_id"] == 2
 
     def test_ask_color_matches_focused(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -301,7 +301,7 @@ class TestImplicitReference:
         assert result["reference_type"] == "implicit"
 
     def test_implicit_no_focused_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -322,7 +322,7 @@ class TestReferenceResolutionPriority:
 
     def test_ordinal_wins_over_pronominal(self):
         """'第二个那款' —— 应该按序号解析，不是代词。"""
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -337,7 +337,7 @@ class TestReferenceResolutionPriority:
         assert result["matched_product"]["product_id"] == 2
 
     def test_no_reference_at_all(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -358,7 +358,7 @@ class TestGracefulDegradation:
     """测试异常处理：Store 读取失败也不该报错。"""
 
     def test_store_error_returns_no_reference(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             async def _raise(*args, **kwargs):
@@ -384,7 +384,7 @@ class TestEntityOrdinalReference:
     """实体域序号指代：上一轮谈过烟酰胺/视黄醇，本轮问'第二个的成分'。"""
 
     def test_second_entity_matches_index_1(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -403,7 +403,7 @@ class TestEntityOrdinalReference:
         assert "「视黄醇」" in result["resolved_query"]
 
     def test_last_entity_matches_end(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -418,7 +418,7 @@ class TestEntityOrdinalReference:
         assert result["matched_entity"] == "透明质酸"
 
     def test_no_entities_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -436,7 +436,7 @@ class TestEntityPluralReference:
     """实体域复数指代：'它们'、'这几个' → 上轮多个实体。"""
 
     def test_them_all_matches_all_entities(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -452,7 +452,7 @@ class TestEntityPluralReference:
         assert result["matched_entities"] == _ENTITIES
 
     def test_three_entities_matches_first_three(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -472,7 +472,7 @@ class TestEntityImplicitReference:
     """实体域隐式指代：句里含'副作用/成分/怎么用'但无明确主语，指向 entities[0]。"""
 
     def test_implicit_side_effect_matches_first_entity(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -488,7 +488,7 @@ class TestEntityImplicitReference:
         assert result["matched_entity"] == "烟酰胺"
 
     def test_implicit_no_entities_returns_no_match(self):
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -507,7 +507,7 @@ class TestProductWinsOverEntity:
 
     def test_product_ordinal_wins_over_entity(self):
         """两域都有 last_XX，'第二个'先按商品定位。"""
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",
@@ -525,7 +525,7 @@ class TestProductWinsOverEntity:
 
     def test_entity_wins_when_no_products(self):
         """只有实体记忆时，'第二个'落到实体域。"""
-        from tools.reference_tools import resolve_reference
+        from app.application.assistant.reference_tools import resolve_reference
 
         async def run():
             with patch("tools.reference_tools.get_business_memory",

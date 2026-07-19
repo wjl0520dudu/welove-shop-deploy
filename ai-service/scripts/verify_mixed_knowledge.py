@@ -14,9 +14,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pymilvus import Collection, connections  # noqa: E402
-from core.config import config  # noqa: E402
-from rag.models import RetrievalPlan  # noqa: E402
-from rag.retriever import get_retriever  # noqa: E402
+from app.infrastructure.config import config  # noqa: E402
+from app.domain.knowledge.models import RetrievalPlan  # noqa: E402
+from app.infrastructure.retrieval.retriever import get_retriever  # noqa: E402
 
 
 CASES = [

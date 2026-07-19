@@ -6,8 +6,6 @@
 
 import os
 import sys
-import uuid
-import json
 import pymysql
 from datetime import datetime
 
@@ -349,8 +347,8 @@ def main():
 
     # 初始化向量库
     print("[...] 初始化向量库...")
-    from rag.vector_store import MilvusVectorStore, create_vector_store
-    from rag.models import DocumentChunk, ChunkMetadata
+    from app.infrastructure.vectorstores.knowledge.vector_store import create_vector_store
+    from app.domain.knowledge.models import DocumentChunk, ChunkMetadata
     vector_store = create_vector_store()
     print("[OK] 向量库初始化完成")
 

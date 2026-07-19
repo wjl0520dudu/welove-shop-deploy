@@ -12,7 +12,6 @@
 """
 
 import asyncio
-import json
 import sys
 import os
 
@@ -61,7 +60,7 @@ class MockMemory:
 async def test_resolve_reference_llm():
     print("\n[resolve_reference — LLM 路径]")
 
-    from tools.reference_tools import _resolve_reference_with_llm, _format_reference_context
+    from app.application.assistant.reference_tools import _resolve_reference_with_llm
 
     # 商品+实体混合上下文 —— 商品优先
     mixed_memory = MockMemory(cards=CARDS, focused=FOCUSED, entities=ENTITIES).data
@@ -137,7 +136,7 @@ async def test_resolve_reference_regex_fallback():
     print("\n[resolve_reference — 正则兜底路径]")
 
     from unittest.mock import patch
-    from tools.reference_tools import resolve_reference
+    from app.application.assistant.reference_tools import resolve_reference
     from langgraph.prebuilt import ToolRuntime
     from langchain_core.runnables import RunnableConfig
 
@@ -197,7 +196,7 @@ async def test_resolve_reference_regex_fallback():
 async def test_entity_extraction_llm():
     print("\n[实体抽取 — LLM 路径]")
 
-    from knowledge.agent import _extract_entities_with_llm
+    from app.domain.knowledge import _extract_entities_with_llm
 
     # 1. 并列实体
     r = await _extract_entities_with_llm("烟酰胺和视黄醇能一起用吗")
@@ -236,7 +235,7 @@ async def test_entity_extraction_regex_fallback():
     """测试正则兜底路径 —— 实体抽取的旧逻辑。"""
     print("\n[实体抽取 — 正则兜底路径]")
 
-    from knowledge.agent import _extract_entities_from_query
+    from app.domain.knowledge import _extract_entities_from_query
 
     check("并列实体：烟酰胺和视黄醇",
           _extract_entities_from_query("烟酰胺和视黄醇能一起用吗") == ["烟酰胺", "视黄醇"])
@@ -261,14 +260,14 @@ async def test_persist_entities_llm_path():
     print("\n[_persist_entities — LLM 优先路径]")
 
     from unittest.mock import patch, AsyncMock
-    from knowledge.agent import KnowledgeAgent
+    from app.domain.knowledge import KnowledgeAgent
 
     # 构造一个 mock LLM 返回实体的场景
     with patch("core.llm.get_llm") as mock_get_llm:
         mock_llm = AsyncMock()
         mock_llm.with_structured_output.return_value = mock_llm
         # 模拟 LLM 返回实体
-        from knowledge.agent import EntityExtractionResult
+        from app.domain.knowledge import EntityExtractionResult
         mock_llm.ainvoke.return_value = EntityExtractionResult(entities=["烟酰胺", "视黄醇"])
         mock_get_llm.return_value = mock_llm
 
@@ -292,7 +291,7 @@ async def test_persist_entities_llm_path():
 async def test_format_context():
     print("\n[语境格式化 — _format_reference_context]")
 
-    from tools.reference_tools import _format_reference_context
+    from app.application.assistant.reference_tools import _format_reference_context
 
     memory = {
         "last_product_cards": CARDS[:2],

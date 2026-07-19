@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from rag.models import ChunkMetadata, DocumentChunk, SearchRequest
+from app.domain.knowledge.models import ChunkMetadata, DocumentChunk, SearchRequest
 
 
 pytestmark = pytest.mark.skipif(
@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_milvus_vector_store_round_trip():
-    from rag.vector_store import MilvusVectorStore
+    from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
 
     store = MilvusVectorStore(collection_name=os.getenv("MILVUS_COLLECTION", "test_hybrid"))
     chunks = [

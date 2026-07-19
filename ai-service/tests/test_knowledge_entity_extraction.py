@@ -1,7 +1,7 @@
 """测试 knowledge/agent.py 的实体抽取逻辑 —— 纯正则，无 LLM 依赖。"""
 from __future__ import annotations
 
-from knowledge.agent import (
+from app.domain.knowledge import (
     _extract_entities_from_query,
     _extract_entities_from_sources,
 )

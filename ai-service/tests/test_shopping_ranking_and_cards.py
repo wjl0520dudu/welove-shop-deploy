@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from shopping.cards import build_product_card_from_detail, build_product_cards
-from shopping.ranking import ProductRanker, _expand_synonyms
-from shopping.schemas import ShoppingNeed
+from app.domain.shopping.cards import build_product_card_from_detail, build_product_cards
+from app.domain.shopping.ranking import ProductRanker, _expand_synonyms
+from app.domain.shopping.schemas import ShoppingNeed
 
 
 def _make_candidate(pid, title, price, brand="", tags="", desc="", sales=100, rating=4.5,
@@ -107,7 +107,7 @@ class TestProductRanker:
 
 class TestBuildProductCards:
     def test_limit_respected(self):
-        from shopping.schemas import RankedProduct
+        from app.domain.shopping.schemas import RankedProduct
         rps = [
             RankedProduct(product_id=i, title=f"P{i}", price=100.0, rank_reason=[f"r{i}"])
             for i in range(5)
@@ -117,7 +117,7 @@ class TestBuildProductCards:
         assert cards[0]["product_id"] == 0
 
     def test_reason_from_rank_reason(self):
-        from shopping.schemas import RankedProduct
+        from app.domain.shopping.schemas import RankedProduct
         rp = RankedProduct(product_id=1, title="A", rank_reason=["匹配防晒", "适合油皮", "价格合适"])
         cards = build_product_cards([rp])
         # 只取前 2 条
@@ -126,7 +126,7 @@ class TestBuildProductCards:
         assert "价格合适" not in cards[0]["reason"]
 
     def test_default_reason_when_empty(self):
-        from shopping.schemas import RankedProduct
+        from app.domain.shopping.schemas import RankedProduct
         rp = RankedProduct(product_id=1, title="A", rank_reason=[])
         cards = build_product_cards([rp])
         assert cards[0]["reason"] == "根据你的需求匹配到的商品。"

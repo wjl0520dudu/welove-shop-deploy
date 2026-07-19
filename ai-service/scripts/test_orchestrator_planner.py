@@ -24,9 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agents.prompts import ORCHESTRATOR_PROMPT
-from agents.schemas import OrchestratorDecision
-from core.llm import get_llm
+from app.prompts.prompts import ORCHESTRATOR_PROMPT
+from app.application.assistant.schemas import OrchestratorDecision
+from app.infrastructure.llm.llm import get_llm
 
 
 TEST_CASES = [

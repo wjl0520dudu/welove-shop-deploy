@@ -34,9 +34,9 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.llm import get_llm                                # noqa: E402
-from shopping.agent import ShoppingAgent                    # noqa: E402
-from agents.memory import (                                  # noqa: E402
+from app.infrastructure.llm.llm import get_llm                                # noqa: E402
+from app.domain.shopping.agent import ShoppingAgent                    # noqa: E402
+from app.infrastructure.persistence.memory import (                                  # noqa: E402
     clear_pending_shopping_need,
     get_pending_shopping_need,
     get_business_memory,

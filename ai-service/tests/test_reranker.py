@@ -21,7 +21,7 @@ class TestDashScopeReranker:
     """DashScopeReranker.rerank：正常 + 各种异常的兜底。"""
 
     def _make(self):
-        from rag.reranker import DashScopeReranker
+        from app.infrastructure.retrieval.reranker import DashScopeReranker
         return DashScopeReranker(
             api_key="test-key",
             model="qwen3-rerank",
@@ -97,7 +97,7 @@ class TestRetrieverTwoStage:
     """Retriever.retrieve 的两阶段：召回 initial_top_k → rerank → top_k。"""
 
     def _make_result(self, doc_id, content, score):
-        from rag.models import ChunkMetadata, SearchResult
+        from app.domain.knowledge.models import ChunkMetadata, SearchResult
         return SearchResult(
             content=content,
             metadata=ChunkMetadata(doc_id=doc_id, title="doc-" + str(doc_id)),
@@ -107,8 +107,8 @@ class TestRetrieverTwoStage:
 
     def test_two_stage_recall_then_rerank(self):
         """开启 rerank：应先召回 initial_top_k=20，再 rerank 到 top_k=5。"""
-        from rag.models import RetrievalPlan
-        from rag.retriever import Retriever
+        from app.domain.knowledge.models import RetrievalPlan
+        from app.infrastructure.retrieval.retriever import Retriever
 
         candidates = [self._make_result(i, "content-" + str(i), 0.5 - i * 0.01) for i in range(20)]
         store = MagicMock()
@@ -132,8 +132,8 @@ class TestRetrieverTwoStage:
 
     def test_rerank_off_uses_recall_directly(self):
         """关闭 rerank：不召回超量，直接返回向量分数排序。"""
-        from rag.models import RetrievalPlan
-        from rag.retriever import Retriever
+        from app.domain.knowledge.models import RetrievalPlan
+        from app.infrastructure.retrieval.retriever import Retriever
 
         candidates = [self._make_result(i, "c-" + str(i), 0.5 - i * 0.01) for i in range(5)]
         store = MagicMock()
@@ -149,8 +149,8 @@ class TestRetrieverTwoStage:
 
     def test_rerank_all_zero_scores_fallback_to_vector_order(self):
         """rerank 返回全 0（降级信号）：应退回向量分数排序。"""
-        from rag.models import RetrievalPlan
-        from rag.retriever import Retriever
+        from app.domain.knowledge.models import RetrievalPlan
+        from app.infrastructure.retrieval.retriever import Retriever
 
         candidates = [
             self._make_result(0, "a", 0.9),
@@ -170,8 +170,8 @@ class TestRetrieverTwoStage:
 
     def test_initial_top_k_defaults_from_config(self):
         """未指定 initial_top_k 时走 config.RAG_INITIAL_TOP_K（默认 20）。"""
-        from rag.models import RetrievalPlan
-        from rag.retriever import Retriever
+        from app.domain.knowledge.models import RetrievalPlan
+        from app.infrastructure.retrieval.retriever import Retriever
 
         candidates = [self._make_result(i, "c-" + str(i), 0.5) for i in range(20)]
         store = MagicMock()
@@ -192,7 +192,7 @@ class TestSearchKnowledgeToolRerank:
     @staticmethod
     def _make_fake_output():
         """构造一个带高分 source 的 fake RetrievalOutput，避免触发博查兜底。"""
-        from rag.models import Source
+        from app.domain.knowledge.models import Source
         fake = MagicMock()
         fake.knowledge_context = "ctx"
         fake.sources = [Source(doc="test doc", score=0.9)]
@@ -201,7 +201,7 @@ class TestSearchKnowledgeToolRerank:
 
     @pytest.mark.asyncio
     async def test_tool_passes_use_rerank_false(self):
-        from knowledge.agent import search_knowledge
+        from app.domain.knowledge import search_knowledge
         with patch("knowledge.agent.get_retriever") as gr:
             fake_out = self._make_fake_output()
             gr.return_value.retrieve.return_value = fake_out
@@ -212,7 +212,7 @@ class TestSearchKnowledgeToolRerank:
 
     @pytest.mark.asyncio
     async def test_tool_default_use_rerank_true(self):
-        from knowledge.agent import search_knowledge
+        from app.domain.knowledge import search_knowledge
         with patch("knowledge.agent.get_retriever") as gr:
             fake_out = self._make_fake_output()
             gr.return_value.retrieve.return_value = fake_out

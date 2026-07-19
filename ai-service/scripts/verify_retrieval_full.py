@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rag.models import RetrievalPlan  # noqa: E402
-from rag.retriever import get_retriever  # noqa: E402
+from app.domain.knowledge.models import RetrievalPlan  # noqa: E402
+from app.infrastructure.retrieval.retriever import get_retriever  # noqa: E402
 
 # 覆盖不同风格：品牌昵称、成分咨询、场景需求、精确型号、跨类目
 QUERIES = [

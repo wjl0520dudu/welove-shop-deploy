@@ -81,8 +81,8 @@ SCENARIOS = [
 
 async def preset_memory():
     """脚本进程连 PG，往 Store 里写入预置商品卡。"""
-    from agents.runtime import init_runtime, is_persistent
-    from agents.memory import remember_product_cards
+    from app.infrastructure.persistence.runtime import init_runtime, is_persistent
+    from app.infrastructure.persistence.memory import remember_product_cards
 
     ok = await init_runtime()
     print(f"[preset] init_runtime → persistent={is_persistent()}")
@@ -94,7 +94,7 @@ async def preset_memory():
     print(f"[preset] 已写入 {len(PRESET_CARDS)} 个商品到 conversation_id={CONVERSATION_ID}")
 
     # 验证读回
-    from agents.memory import get_business_memory
+    from app.infrastructure.persistence.memory import get_business_memory
     memory = await get_business_memory(CONVERSATION_ID, None)
     read_cards = memory.get("last_product_cards", [])
     print(f"[preset] 读回验证：{len(read_cards)} 个商品")

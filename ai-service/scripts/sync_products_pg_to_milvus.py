@@ -115,11 +115,10 @@ from typing import Any, Dict, List, Optional, Set
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select, text                       # noqa: E402
-from sqlalchemy.orm import selectinload                   # noqa: E402
 
-from core.database import get_session_factory             # noqa: E402
-from shopping.orm_models import CategoryORM, ProductORM   # noqa: E402
-from shopping.vector_store import get_product_milvus_store  # noqa: E402
+from app.infrastructure.persistence.database import get_session_factory             # noqa: E402
+from app.infrastructure.persistence.orm_models import CategoryORM, ProductORM   # noqa: E402
+from app.infrastructure.vectorstores.product.vector_store import get_product_milvus_store  # noqa: E402
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s | %(message)s")
