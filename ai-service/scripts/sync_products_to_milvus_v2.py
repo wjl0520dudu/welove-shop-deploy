@@ -21,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select, text                       # noqa: E402
 
-from core.database import get_session_factory             # noqa: E402
-from rag.embeddings import _build_search_text_v2, get_embeddings  # noqa: E402
-from rag.multimodal_embeddings import (                   # noqa: E402
+from app.infrastructure.persistence.database import get_session_factory             # noqa: E402
+from app.infrastructure.retrieval.embeddings import _build_search_text_v2, get_embeddings  # noqa: E402
+from app.infrastructure.retrieval.multimodal_embeddings import (                   # noqa: E402
     MultimodalImageError,
     get_multimodal_embeddings,
     zero_image_vector,

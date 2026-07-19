@@ -21,8 +21,8 @@ from typing import Set
 # 添加项目根目录到 path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.database import get_session_factory
-from rag.vector_store import create_vector_store
+from app.infrastructure.persistence.database import get_session_factory
+from app.infrastructure.vectorstores.knowledge.vector_store import create_vector_store
 from pymilvus import Collection, connections
 
 

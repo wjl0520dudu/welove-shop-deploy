@@ -8,9 +8,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from tools.shopping_tools import ProductFeatures
+from app.domain.shopping.tools.shopping_tools import ProductFeatures
 
 
 # ---- ProductFeatures field_validator ----------------------------------------
@@ -137,7 +135,7 @@ class TestSearchProductsByName:
         ]
         mock_sf = _mock_session_factory(mock_products)
 
-        from tools.shopping_tools import search_products_by_name
+        from app.domain.shopping.tools.shopping_tools import search_products_by_name
 
         async def run():
             with patch("tools.shopping_tools.get_session_factory", return_value=mock_sf):
@@ -161,7 +159,7 @@ class TestSearchProductsByName:
     def test_no_results_returns_empty(self):
         mock_sf = _mock_session_factory([])
 
-        from tools.shopping_tools import search_products_by_name
+        from app.domain.shopping.tools.shopping_tools import search_products_by_name
 
         async def run():
             with patch("tools.shopping_tools.get_session_factory", return_value=mock_sf):
@@ -177,7 +175,7 @@ class TestSearchProductsByName:
         assert result == []
 
     def test_empty_query_returns_empty(self):
-        from tools.shopping_tools import search_products_by_name
+        from app.domain.shopping.tools.shopping_tools import search_products_by_name
 
         async def run():
             runtime = _make_runtime()
@@ -216,7 +214,7 @@ class TestListProductSkus:
 
         mock_sf = _mock_session_factory([mock_sku1, mock_sku2])
 
-        from tools.shopping_tools import list_product_skus
+        from app.domain.shopping.tools.shopping_tools import list_product_skus
 
         async def run():
             with patch("tools.shopping_tools.get_session_factory", return_value=mock_sf):
@@ -233,7 +231,7 @@ class TestListProductSkus:
     def test_no_skus_returns_empty(self):
         mock_sf = _mock_session_factory([])
 
-        from tools.shopping_tools import list_product_skus
+        from app.domain.shopping.tools.shopping_tools import list_product_skus
 
         async def run():
             with patch("tools.shopping_tools.get_session_factory", return_value=mock_sf):

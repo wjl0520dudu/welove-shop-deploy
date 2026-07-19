@@ -7,17 +7,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
-from rag.models import (
+from app.domain.knowledge.models import (
     ChunkMetadata,
-    MetadataFilter,
     RetrievalOutput,
     RetrievalPlan,
     SearchResult,
     Source,
 )
-from rag.retriever import Retriever, build_knowledge_context, build_sources
+from app.infrastructure.retrieval.retriever import Retriever, build_knowledge_context, build_sources
 
 
 class TestBuildSources:

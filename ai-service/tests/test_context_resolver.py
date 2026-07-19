@@ -1,4 +1,4 @@
-from assistant.context_resolver import resolve_turn_context
+from app.application.assistant import resolve_turn_context
 
 
 TEXT_CARDS = [

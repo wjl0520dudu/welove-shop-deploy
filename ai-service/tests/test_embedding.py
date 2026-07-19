@@ -10,7 +10,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_embedding_provider_returns_vector():
-    from rag.vector_store import get_embeddings
+    from app.infrastructure.vectorstores.knowledge.vector_store import get_embeddings
 
     vector = get_embeddings().embed_query("你好，世界")
     assert isinstance(vector, list)

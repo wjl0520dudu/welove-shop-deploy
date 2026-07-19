@@ -26,7 +26,7 @@ if _AI_SERVICE not in sys.path:
 
 import asyncpg  # noqa: E402
 
-from core.config import config  # noqa: E402
+from app.infrastructure.config import config  # noqa: E402
 
 TOP_N_TABLES = 20
 

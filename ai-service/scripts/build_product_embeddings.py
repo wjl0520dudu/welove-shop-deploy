@@ -24,10 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select
 
-from core.database import get_session_factory
-from core.llm import get_embeddings_model
-from pg_search.engine import get_pg_session_factory
-from pg_search.orm import ProductSearchORM
+from app.infrastructure.persistence.database import get_session_factory
+from app.infrastructure.llm.llm import get_embeddings_model
+from app.infrastructure.vectorstores.pgvector.engine import get_pg_session_factory
+from app.infrastructure.vectorstores.pgvector.orm import ProductSearchORM
 from shopping.orm_models import ProductORM
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

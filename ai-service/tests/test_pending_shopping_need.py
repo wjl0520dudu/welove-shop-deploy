@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 class TestGetPendingShoppingNeed:
     def test_returns_none_when_absent(self):
-        from agents.memory import get_pending_shopping_need
+        from app.infrastructure.persistence.memory import get_pending_shopping_need
 
         async def run():
             with patch("agents.memory._get_conversation", new=AsyncMock(return_value={})):
@@ -21,7 +21,7 @@ class TestGetPendingShoppingNeed:
         assert asyncio.run(run()) is None
 
     def test_returns_dict_when_present(self):
-        from agents.memory import get_pending_shopping_need
+        from app.infrastructure.persistence.memory import get_pending_shopping_need
 
         pending = {"status": "clarifying", "need": {}, "turn_count": 1}
 
@@ -36,7 +36,7 @@ class TestGetPendingShoppingNeed:
 
     def test_drops_when_turn_count_exceeds_max(self):
         """turn_count 达到 _MAX_PENDING_TURNS(=3) 时应清除并返回 None。"""
-        from agents.memory import get_pending_shopping_need
+        from app.infrastructure.persistence.memory import get_pending_shopping_need
 
         pending = {"status": "clarifying", "need": {}, "turn_count": 3}
 
@@ -57,7 +57,7 @@ class TestGetPendingShoppingNeed:
 
 class TestRememberPendingShoppingNeed:
     def test_writes_snapshot(self):
-        from agents.memory import remember_pending_shopping_need
+        from app.infrastructure.persistence.memory import remember_pending_shopping_need
 
         async def run():
             mock_get = AsyncMock(return_value={})
@@ -75,7 +75,7 @@ class TestRememberPendingShoppingNeed:
         asyncio.run(run())
 
     def test_noop_on_empty(self):
-        from agents.memory import remember_pending_shopping_need
+        from app.infrastructure.persistence.memory import remember_pending_shopping_need
 
         async def run():
             mock_get = AsyncMock(return_value={})
@@ -90,7 +90,7 @@ class TestRememberPendingShoppingNeed:
 
 class TestClearPendingShoppingNeed:
     def test_removes_key(self):
-        from agents.memory import clear_pending_shopping_need
+        from app.infrastructure.persistence.memory import clear_pending_shopping_need
 
         async def run():
             mock_get = AsyncMock(return_value={
@@ -110,7 +110,7 @@ class TestClearPendingShoppingNeed:
         asyncio.run(run())
 
     def test_noop_when_absent(self):
-        from agents.memory import clear_pending_shopping_need
+        from app.infrastructure.persistence.memory import clear_pending_shopping_need
 
         async def run():
             mock_get = AsyncMock(return_value={"last_product_cards": []})

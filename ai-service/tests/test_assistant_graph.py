@@ -1,10 +1,10 @@
 import asyncio
 from unittest.mock import MagicMock
 
-from agents.schemas import IntentDecision, OrchestratorDecision
-from agents.memory import remember_product_cards, get_business_memory
-from assistant.graph import AssistantGraph, _heuristic_split_tasks
-from assistant.orchestration import PlanValidationError, build_task_levels
+from app.application.assistant.schemas import OrchestratorDecision
+from app.infrastructure.persistence.memory import remember_product_cards, get_business_memory
+from app.application.assistant import AssistantGraph, _heuristic_split_tasks
+from app.application.assistant import PlanValidationError, build_task_levels
 
 
 def clear_business_memory():

@@ -9,7 +9,7 @@ if sys.platform == "win32":
 # 加载时能读到 LANGCHAIN_* 环境变量并自动挂钩。
 # 我们把 config 里的 LANGSMITH_* 映射到 LangChain 期望的 LANGCHAIN_* 前缀名。
 import os
-from core.config import config as _cfg
+from app.infrastructure.config import config as _cfg
 if _cfg.LANGSMITH_TRACING and _cfg.LANGSMITH_API_KEY:
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
     os.environ.setdefault("LANGCHAIN_ENDPOINT", _cfg.LANGSMITH_ENDPOINT)
@@ -22,7 +22,7 @@ if _cfg.LANGSMITH_TRACING and _cfg.LANGSMITH_API_KEY:
     os.environ.setdefault("LANGSMITH_PROJECT", _cfg.LANGSMITH_PROJECT)
 
 # 结构化日志必须尽早配置，让 lifespan 和后续 import 阶段的日志都用统一格式
-from core.logging_config import setup_logging
+from app.api.logging_config import setup_logging
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
 
 import logging
@@ -34,10 +34,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from agents.runtime import init_runtime, close_runtime
-from api.assistant_routes import router as assistant_router
-from api.health_routes import router as health_router
-from api.middleware import RequestLogMiddleware, TraceIdMiddleware
+from app.infrastructure.persistence.runtime import init_runtime, close_runtime
+from app.api.assistant_routes import router as assistant_router
+from app.api.health_routes import router as health_router
+from app.api.middleware import RequestLogMiddleware, TraceIdMiddleware
 
 
 @asynccontextmanager
@@ -76,7 +76,7 @@ app.include_router(health_router)
 
 # RAG 路由依赖 pymilvus；缺依赖时降级跳过，保证 assistant 主图始终可用。
 try:
-    from api.rag_routes import router as rag_router
+    from app.api.rag_routes import router as rag_router
     app.include_router(rag_router)
 except Exception as _rag_import_error:  # pragma: no cover
     logging.getLogger("ai-service").warning("RAG routes disabled: %s", _rag_import_error)

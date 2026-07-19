@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select                             # noqa: E402
 
-from core.database import get_session_factory             # noqa: E402
-from core.llm import get_llm                              # noqa: E402
+from app.infrastructure.persistence.database import get_session_factory             # noqa: E402
+from app.infrastructure.llm.llm import get_llm                              # noqa: E402
 from shopping.orm_models import CategoryORM, ProductORM   # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

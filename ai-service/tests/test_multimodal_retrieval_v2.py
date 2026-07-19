@@ -10,8 +10,8 @@ from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from rag.embeddings import _build_search_text_v2
-from rag.multimodal_embeddings import DashScopeMultimodalEmbeddings
+from app.infrastructure.retrieval.embeddings import _build_search_text_v2
+from app.infrastructure.retrieval.multimodal_embeddings import DashScopeMultimodalEmbeddings
 from shopping.multimodal_search import rrf_fusion, weighted_rerank
 from shopping.vector_store_v2 import INSERT_FIELDS_V2, OUTPUT_FIELDS_V2, _build_fields_v2
 
@@ -139,7 +139,7 @@ class TestMultimodalRerank:
 
     def test_image_embedding_image_error_raises(self):
         """DashScope 返回 InvalidParameter 等图片错误 → 抛 MultimodalImageError。"""
-        from rag.multimodal_embeddings import MultimodalImageError
+        from app.infrastructure.retrieval.multimodal_embeddings import MultimodalImageError
 
         client = DashScopeMultimodalEmbeddings(api_key="test-key", image_dim=3, base_url="")
 
@@ -158,7 +158,7 @@ class TestMultimodalRerank:
 
     def test_fusion_embedding_image_error_raises(self):
         """embed_fusion 同样对图片错误抛异常。"""
-        from rag.multimodal_embeddings import MultimodalImageError
+        from app.infrastructure.retrieval.multimodal_embeddings import MultimodalImageError
 
         client = DashScopeMultimodalEmbeddings(
             api_key="test-key", multimodal_dim=3, base_url="",
@@ -212,7 +212,7 @@ class TestSyncRows:
 
     def test_build_rows_downgrades_on_image_error(self):
         """同步脚本对 MultimodalImageError 降级零向量，不阻断批处理。"""
-        from rag.multimodal_embeddings import MultimodalImageError
+        from app.infrastructure.retrieval.multimodal_embeddings import MultimodalImageError
 
         scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
         sys.path.insert(0, str(scripts_dir))

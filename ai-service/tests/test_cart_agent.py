@@ -1,10 +1,10 @@
 import asyncio
 
-from agents.schemas import AgentFinalResponse
-from cart.cart_agent import CartAgent
-from cart.models import CartToolResult
-from tools.cart_tools import build_cart_tools
-from agents.schemas import AgentRequestContext
+from app.application.assistant.schemas import AgentFinalResponse
+from app.legacy.cart.cart_agent import CartAgent
+from app.legacy.cart import CartToolResult
+from app.legacy.cart.cart_tools import build_cart_tools
+from app.application.assistant.schemas import AgentRequestContext
 
 
 class FakeCartClient:

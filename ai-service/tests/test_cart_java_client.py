@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from cart.java_client import CartJavaClient
+from app.legacy.cart import CartJavaClient
 
 
 class FakeAsyncClient:

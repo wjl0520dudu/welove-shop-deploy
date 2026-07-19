@@ -4,9 +4,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from core.config import config
-from rag.models import ParseRequest, DocumentChunk
-from rag.document_pipeline import (
+from app.infrastructure.config import config
+from app.domain.knowledge.models import ParseRequest, DocumentChunk
+from app.domain.knowledge.document_pipeline import (
     load_text,
     clean_text,
     hash_content,

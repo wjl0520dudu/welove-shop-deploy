@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pg_search.pgvector_store import PgVectorStore
-from pg_search.engine import get_pg_session_factory
+from app.infrastructure.vectorstores.pgvector.pgvector_store import PgVectorStore
+from app.infrastructure.vectorstores.pgvector.engine import get_pg_session_factory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("verify_pgvector")

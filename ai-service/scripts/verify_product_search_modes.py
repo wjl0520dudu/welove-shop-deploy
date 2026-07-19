@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shopping.vector_store import get_product_milvus_store   # noqa: E402
-from rag.reranker import get_reranker                        # noqa: E402
+from app.infrastructure.retrieval.reranker import get_reranker                        # noqa: E402
 
 
 QUERIES = [

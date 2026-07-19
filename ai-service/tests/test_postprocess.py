@@ -1,5 +1,5 @@
 """输出后处理测试。"""
-from chains.postprocess import guard_empty, truncate
+from app.legacy.chains.postprocess import guard_empty, truncate
 
 
 def test_guard_empty_keeps_nonempty():

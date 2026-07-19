@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -34,8 +33,8 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
-from agents.runtime import init_runtime, close_runtime
-from rag.models import Source
+from app.infrastructure.persistence.runtime import init_runtime, close_runtime
+from app.domain.knowledge.models import Source
 
 
 def section(title: str) -> None:
@@ -49,7 +48,7 @@ async def test_1_bocha_search_direct() -> None:
     """测试 1：直接调用 bocha_search，验证博查 API 通路。"""
     section("测试 1：bocha_search 直接调用（MCP 优先，HTTP 兜底）")
 
-    from knowledge.mcp_client import bocha_search, build_bocha_context
+    from app.domain.knowledge import bocha_search, build_bocha_context
 
     query = "烟酰胺和VC能一起用吗"
     print(f"查询：{query}")
@@ -77,7 +76,7 @@ async def test_2_search_knowledge_low_score() -> None:
     """测试 2：Milvus 低分 → 触发博查兜底。"""
     section("测试 2：search_knowledge 低分场景（应该触发兜底）")
 
-    from knowledge.agent import search_knowledge
+    from app.domain.knowledge import search_knowledge
 
     fake_output = MagicMock()
     fake_output.knowledge_context = "（低质量内部结果）"
@@ -106,7 +105,7 @@ async def test_3_search_knowledge_high_score() -> None:
     """测试 3：Milvus 高分 → 不触发兜底。"""
     section("测试 3：search_knowledge 高分场景（不应触发兜底）")
 
-    from knowledge.agent import search_knowledge
+    from app.domain.knowledge import search_knowledge
 
     fake_output = MagicMock()
     fake_output.knowledge_context = "烟酰胺可以和VC一起使用（内部知识库高质量结果）"

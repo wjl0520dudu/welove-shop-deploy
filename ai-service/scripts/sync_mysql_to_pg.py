@@ -38,7 +38,7 @@ from sqlalchemy import MetaData, Table, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from core.database import build_database_url, build_mysql_url
+from app.infrastructure.persistence.database import build_database_url, build_mysql_url
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("sync_mysql_to_pg")
