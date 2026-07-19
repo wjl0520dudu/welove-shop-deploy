@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from shopping.relevance_judge import category_cohesion_filter, filter_candidates
+from app.domain.shopping.relevance_judge import category_cohesion_filter, filter_candidates
 
 
 def _item(product_id, sub_category):

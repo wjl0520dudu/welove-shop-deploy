@@ -28,7 +28,7 @@ from app.infrastructure.persistence.database import get_session_factory
 from app.infrastructure.llm.llm import get_embeddings_model
 from app.infrastructure.vectorstores.pgvector.engine import get_pg_session_factory
 from app.infrastructure.vectorstores.pgvector.orm import ProductSearchORM
-from shopping.orm_models import ProductORM
+from app.infrastructure.persistence.orm_models import ProductORM
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("build_product_embeddings")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from shopping.capabilities.recommend import (
+from app.domain.shopping.capabilities.recommend import (
     RecommendCapability,
     _looks_like_compare,
     _looks_like_detail,
@@ -19,8 +19,8 @@ from shopping.capabilities.recommend import (
     get_missing_required_slots,
     merge_shopping_need,
 )
-from shopping.ranking import ProductRanker
-from shopping.schemas import ShoppingContext, ShoppingNeed
+from app.domain.shopping.ranking import ProductRanker
+from app.domain.shopping.schemas import ShoppingContext, ShoppingNeed
 
 
 def _ctx(**kwargs):
@@ -184,7 +184,7 @@ class TestRecommendCapabilityRun:
         mock_rerank = MagicMock()
         mock_rerank.rerank = MagicMock(return_value=[(0, 0.95), (1, 0.85)])
 
-        from shopping.retrieval import ShoppingRetriever
+        from app.domain.shopping.retrieval import ShoppingRetriever
         cap = RecommendCapability(
             retriever=ShoppingRetriever(milvus_store=mock_milvus, reranker=mock_rerank),
         )
@@ -215,7 +215,7 @@ class TestRecommendCapabilityRun:
         mock_milvus = MagicMock()
         mock_milvus.search = MagicMock(return_value=[])
         mock_milvus.hybrid_search = MagicMock(return_value=[])
-        from shopping.retrieval import ShoppingRetriever
+        from app.domain.shopping.retrieval import ShoppingRetriever
         cap = RecommendCapability(
             retriever=ShoppingRetriever(milvus_store=mock_milvus, reranker=MagicMock()),
         )

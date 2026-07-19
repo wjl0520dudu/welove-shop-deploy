@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.infrastructure.llm.llm import get_llm                                # noqa: E402
-from shopping.multimodal_search import (                    # noqa: E402
+from app.domain.shopping.multimodal_search import (                    # noqa: E402
     search_multimodal_v1,
     search_multimodal_v2,
     search_multimodal_v3,

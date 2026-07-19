@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 from app.infrastructure.retrieval.embeddings import _build_search_text_v2
 from app.infrastructure.retrieval.multimodal_embeddings import DashScopeMultimodalEmbeddings
-from shopping.multimodal_search import rrf_fusion, weighted_rerank
-from shopping.vector_store_v2 import INSERT_FIELDS_V2, OUTPUT_FIELDS_V2, _build_fields_v2
+from app.domain.shopping.multimodal_search import rrf_fusion, weighted_rerank
+from app.infrastructure.vectorstores.product.vector_store_v2 import INSERT_FIELDS_V2, OUTPUT_FIELDS_V2, _build_fields_v2
 
 
 class TestBuildSearchTextV2:

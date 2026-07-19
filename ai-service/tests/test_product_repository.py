@@ -1,9 +1,9 @@
 from decimal import Decimal
 import asyncio
 
-from shopping.models import ShoppingIntent
-from shopping.orm_models import ProductORM
-from shopping.product_repository import ProductRepository
+from app.domain.shopping.models import ShoppingIntent
+from app.infrastructure.persistence.orm_models import ProductORM
+from app.domain.shopping.product_repository import ProductRepository
 
 
 class FakeResult:

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.infrastructure.llm.llm import get_llm                     # noqa: E402
 from app.infrastructure.persistence.runtime import init_runtime          # noqa: E402
 from app.application.assistant import AssistantGraph       # noqa: E402
-from shopping.agent import ShoppingAgent         # noqa: E402
+from app.domain.shopping.agent import ShoppingAgent         # noqa: E402
 from app.domain.knowledge import KnowledgeAgent       # noqa: E402
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)

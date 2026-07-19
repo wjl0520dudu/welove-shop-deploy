@@ -29,8 +29,8 @@ from app.infrastructure.retrieval.multimodal_embeddings import (                
     zero_image_vector,
     zero_multimodal_vector,
 )
-from shopping.orm_models import CategoryORM, ProductORM   # noqa: E402
-from shopping.vector_store_v2 import get_product_milvus_store_v2  # noqa: E402
+from app.infrastructure.persistence.orm_models import CategoryORM, ProductORM   # noqa: E402
+from app.infrastructure.vectorstores.product.vector_store_v2 import get_product_milvus_store_v2  # noqa: E402
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s | %(message)s")

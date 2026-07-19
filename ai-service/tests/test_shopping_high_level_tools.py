@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from shopping.agent import _extract_high_level_tool_result
-from shopping.context import build_shopping_context_from_runtime
-from shopping.high_level_tools import SHOPPING_HIGH_LEVEL_TOOLS
+from app.domain.shopping.agent import _extract_high_level_tool_result
+from app.domain.shopping.context import build_shopping_context_from_runtime
+from app.domain.shopping.high_level_tools import SHOPPING_HIGH_LEVEL_TOOLS
 
 
 class TestToolCatalog:
