@@ -30,8 +30,8 @@ from app.infrastructure.persistence.memory import (
 )
 from app.infrastructure.persistence.database import get_session_factory
 from app.infrastructure.llm.llm import get_llm
-from shopping.models import ShoppingIntent
-from shopping.orm_models import ProductORM, ProductSkuORM
+from app.domain.shopping.models import ShoppingIntent
+from app.domain.shopping.orm_models import ProductORM, ProductSkuORM
 
 logger = logging.getLogger("ai-service.shopping_tools")
 
@@ -59,7 +59,7 @@ def _get_repository():
     """懒加载 ProductRepository 单例（MySQL LIKE 回退用）。"""
     global _product_repository
     if _product_repository is None:
-        from shopping.product_repository import ProductRepository
+        from app.domain.shopping.product_repository import ProductRepository
         _product_repository = ProductRepository()
     return _product_repository
 

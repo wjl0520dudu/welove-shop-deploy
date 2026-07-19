@@ -8,8 +8,8 @@ from sqlalchemy import and_, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.persistence.database import get_session_factory
-from shopping.models import ProductCandidate, ShoppingIntent
-from shopping.orm_models import CategoryORM, ProductORM, RecommendationLogORM
+from app.domain.shopping.models import ProductCandidate, ShoppingIntent
+from app.domain.shopping.orm_models import CategoryORM, ProductORM, RecommendationLogORM
 
 logger = logging.getLogger("ai-service.shopping")
 

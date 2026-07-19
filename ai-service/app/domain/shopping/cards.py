@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from shopping.schemas import RankedProduct
+from app.domain.shopping.schemas import RankedProduct
 
 
 def build_product_cards(

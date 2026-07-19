@@ -40,11 +40,11 @@ from app.infrastructure.persistence.memory import (
     remember_product_cards,
 )
 from app.infrastructure.llm.llm import get_llm
-from shopping.cards import build_product_cards
-from shopping.ranking import ProductRanker
-from shopping.personalization import apply_user_preferences, facts_from_shopping_need
-from shopping.retrieval import ShoppingRetriever, build_retrieval_plan
-from shopping.schemas import (
+from app.domain.shopping.cards import build_product_cards
+from app.domain.shopping.ranking import ProductRanker
+from app.domain.shopping.personalization import apply_user_preferences, facts_from_shopping_need
+from app.domain.shopping.retrieval import ShoppingRetriever, build_retrieval_plan
+from app.domain.shopping.schemas import (
     PendingShoppingNeed,
     RecommendToolResult,
     ShoppingContext,

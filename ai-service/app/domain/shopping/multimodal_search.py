@@ -18,8 +18,8 @@ from app.infrastructure.retrieval.multimodal_embeddings import (
     embed_image,
     multimodal_rerank,
 )
-from shopping.category_resolver import normalize_product_category
-from shopping.vector_store_v2 import get_product_milvus_store_v2
+from app.domain.shopping.category_resolver import normalize_product_category
+from app.domain.shopping.vector_store_v2 import get_product_milvus_store_v2
 
 logger = logging.getLogger("ai-service.shopping.multimodal_search")
 

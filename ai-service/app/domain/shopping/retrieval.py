@@ -26,8 +26,8 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from app.infrastructure.config import config
-from shopping.category_resolver import normalize_product_category
-from shopping.schemas import ProductFilterPlan, ShoppingNeed, ShoppingRetrievalPlan
+from app.domain.shopping.category_resolver import normalize_product_category
+from app.domain.shopping.schemas import ProductFilterPlan, ShoppingNeed, ShoppingRetrievalPlan
 
 logger = logging.getLogger("ai-service.shopping.retrieval")
 
@@ -54,7 +54,7 @@ class ShoppingRetriever:
 
     def _get_milvus_store(self):
         if self._milvus_store is None:
-            from shopping.vector_store import get_product_milvus_store
+            from app.domain.shopping.vector_store import get_product_milvus_store
             self._milvus_store = get_product_milvus_store()
         return self._milvus_store
 

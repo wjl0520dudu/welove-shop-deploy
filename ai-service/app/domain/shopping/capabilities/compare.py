@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from shopping.schemas import CompareToolResult, ShoppingContext
+from app.domain.shopping.schemas import CompareToolResult, ShoppingContext
 from app.application.assistant.reference_tools import (
     _resolve_ordinal,
     _resolve_plural,
@@ -76,7 +76,7 @@ async def _load_products_by_ids(product_ids: List[int]) -> List[Dict[str, Any]]:
     """
     if not product_ids:
         return []
-    from shopping.vector_store import get_product_milvus_store
+    from app.domain.shopping.vector_store import get_product_milvus_store
     from pymilvus import Collection
 
     try:

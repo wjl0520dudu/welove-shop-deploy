@@ -17,13 +17,13 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolRuntime
 
-from shopping.capabilities import (
+from app.domain.shopping.capabilities import (
     CompareCapability,
     DetailCapability,
     RecommendCapability,
     UserShoppingContextCapability,
 )
-from shopping.context import build_shopping_context_from_runtime
+from app.domain.shopping.context import build_shopping_context_from_runtime
 
 logger = logging.getLogger("ai-service.shopping.high_level_tools")
 

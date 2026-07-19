@@ -11,7 +11,7 @@ from app.infrastructure.persistence.memory import get_business_memory, remember_
 from app.domain.shopping.preferences import build_preference_questions
 from app.prompts.prompts import CHITCHAT_PROMPT
 from app.infrastructure.errors import ErrorCode
-from shopping.agent import ShoppingAgent
+from app.domain.shopping.agent import ShoppingAgent
 from app.domain.knowledge.agent import KnowledgeAgent
 
 logger = logging.getLogger("ai-service.nodes")
@@ -81,13 +81,13 @@ async def _multimodal_shopping(
     不走 ShoppingAgent 的 tool loop，因为文本 LLM 看不到图，让它决定要不要
     调多模态工具没意义；直接程序侧调多模态检索，把结果交给 LLM 生成话术。
     """
-    from shopping.multimodal_search import (
+    from app.domain.shopping.multimodal_search import (
         enforce_explicit_product_filters,
         extract_explicit_product_filters,
         search_multimodal_v1,
     )
-    from shopping.relevance_judge import filter_candidates
-    from shopping.personalization import personalized_rerank_candidates
+    from app.domain.shopping.relevance_judge import filter_candidates
+    from app.domain.shopping.personalization import personalized_rerank_candidates
 
     preferences = dict((business_memory or {}).get("user_preferences") or {})
     hard_filters = extract_explicit_product_filters(query_text)

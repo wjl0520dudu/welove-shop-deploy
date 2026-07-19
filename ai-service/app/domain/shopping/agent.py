@@ -15,15 +15,15 @@ from app.prompts.prompts import SHOPPING_AGENT_PROMPT
 from app.application.assistant.state import ShoppingAgentState
 from app.infrastructure.llm.middleware import build_summarization_middleware
 from app.infrastructure.errors import ErrorCode
-from shopping.capabilities import (
+from app.domain.shopping.capabilities import (
     CompareCapability,
     DetailCapability,
     RecommendCapability,
     UserShoppingContextCapability,
 )
 from app.domain.shopping.dispatcher import DispatchDecision, dispatch_shopping_capability
-from shopping.high_level_tools import SHOPPING_HIGH_LEVEL_TOOLS
-from shopping.schemas import ShoppingContext
+from app.domain.shopping.high_level_tools import SHOPPING_HIGH_LEVEL_TOOLS
+from app.domain.shopping.schemas import ShoppingContext
 
 # Phase 1a 关键变更：LLM 只面对 4 个高层 tool，底层 12 个工具全部退到 Capability 内部。
 # 见 shopping/high_level_tools.py 和 shopping/capabilities/*。

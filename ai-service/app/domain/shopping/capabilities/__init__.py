@@ -11,10 +11,10 @@ Tool 只做参数收敛 + 结果 dump，Capability 才是"确定性 pipeline"的
    （search / detail / compare），但**不再**把它们挂给 LLM。
 """
 
-from shopping.capabilities.recommend import RecommendCapability
-from shopping.capabilities.compare import CompareCapability
-from shopping.capabilities.detail import DetailCapability
-from shopping.capabilities.user_context import UserShoppingContextCapability
+from app.domain.shopping.capabilities.recommend import RecommendCapability
+from app.domain.shopping.capabilities.compare import CompareCapability
+from app.domain.shopping.capabilities.detail import DetailCapability
+from app.domain.shopping.capabilities.user_context import UserShoppingContextCapability
 
 __all__ = [
     "RecommendCapability",

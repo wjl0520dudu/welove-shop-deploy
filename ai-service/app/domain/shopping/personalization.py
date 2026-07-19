@@ -11,7 +11,7 @@ from app.domain.shopping.preferences import (
     make_preference_fact,
 )
 from app.infrastructure.config import config
-from shopping.schemas import ShoppingNeed
+from app.domain.shopping.schemas import ShoppingNeed
 
 
 _POSITIVE_ASPECTS = {
@@ -166,7 +166,7 @@ def personalized_rerank_candidates(
     ):
         return items
 
-    from shopping.ranking import _expand_synonyms
+    from app.domain.shopping.ranking import _expand_synonyms
 
     positive_terms = {term for value in positive for term in _expand_synonyms([value])}
     negative_terms = {term for value in negative for term in _expand_synonyms([value])}

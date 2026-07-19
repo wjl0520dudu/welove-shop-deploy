@@ -16,7 +16,7 @@ from typing import Any, Dict
 from langgraph.prebuilt import ToolRuntime
 
 from app.infrastructure.persistence.memory import get_business_memory
-from shopping.schemas import ShoppingContext
+from app.domain.shopping.schemas import ShoppingContext
 
 
 async def build_shopping_context_from_runtime(runtime: ToolRuntime) -> ShoppingContext:

@@ -25,8 +25,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.infrastructure.config import config
-from shopping.category_resolver import normalize_product_category
-from shopping.schemas import RankedProduct, ShoppingNeed
+from app.domain.shopping.category_resolver import normalize_product_category
+from app.domain.shopping.schemas import RankedProduct, ShoppingNeed
 
 
 # 权重集中一处，改分布只改这里
