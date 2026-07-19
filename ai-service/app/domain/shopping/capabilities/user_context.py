@@ -50,7 +50,7 @@ class UserShoppingContextCapability:
 
         # ── 从 PG 读 users 表基础 profile（skin_type / gender / preference_tags / profile JSONB）──
         try:
-            from app.domain.shopping.orm_models import UserORM
+            from app.infrastructure.persistence.orm_models import UserORM
             session_factory = get_session_factory()
             async with session_factory() as session:
                 user = (await session.execute(

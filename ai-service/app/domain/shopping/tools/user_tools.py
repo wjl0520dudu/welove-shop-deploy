@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.infrastructure.persistence.database import get_session_factory
-from app.domain.shopping.orm_models import (
+from app.infrastructure.persistence.orm_models import (
     OrderItemORM,
     OrderORM,
     UserBrowseHistoryORM,

@@ -31,7 +31,7 @@ from app.infrastructure.persistence.memory import (
 from app.infrastructure.persistence.database import get_session_factory
 from app.infrastructure.llm.llm import get_llm
 from app.domain.shopping.models import ShoppingIntent
-from app.domain.shopping.orm_models import ProductORM, ProductSkuORM
+from app.infrastructure.persistence.orm_models import ProductORM, ProductSkuORM
 
 logger = logging.getLogger("ai-service.shopping_tools")
 

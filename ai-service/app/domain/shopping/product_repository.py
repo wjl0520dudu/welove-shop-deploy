@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.persistence.database import get_session_factory
 from app.domain.shopping.models import ProductCandidate, ShoppingIntent
-from app.domain.shopping.orm_models import CategoryORM, ProductORM, RecommendationLogORM
+from app.infrastructure.persistence.orm_models import CategoryORM, ProductORM, RecommendationLogORM
 
 logger = logging.getLogger("ai-service.shopping")
 

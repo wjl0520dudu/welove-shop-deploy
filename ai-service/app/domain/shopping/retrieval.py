@@ -54,7 +54,7 @@ class ShoppingRetriever:
 
     def _get_milvus_store(self):
         if self._milvus_store is None:
-            from app.domain.shopping.vector_store import get_product_milvus_store
+            from app.infrastructure.vectorstores.product.vector_store import get_product_milvus_store
             self._milvus_store = get_product_milvus_store()
         return self._milvus_store
 

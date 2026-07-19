@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 from pathlib import Path
 
-ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(ENV_FILE, override=True)
 
 class Config:

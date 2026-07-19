@@ -76,7 +76,7 @@ async def _load_products_by_ids(product_ids: List[int]) -> List[Dict[str, Any]]:
     """
     if not product_ids:
         return []
-    from app.domain.shopping.vector_store import get_product_milvus_store
+    from app.infrastructure.vectorstores.product.vector_store import get_product_milvus_store
     from pymilvus import Collection
 
     try:

@@ -25,7 +25,7 @@ from pymilvus import (
 
 from app.infrastructure.config import config
 from app.infrastructure.retrieval.embeddings import get_embeddings
-from app.domain.shopping.vector_store import _ANALYZER_PARAMS, build_milvus_filter_expr
+from app.infrastructure.vectorstores.product.vector_store import _ANALYZER_PARAMS, build_milvus_filter_expr
 
 logger = logging.getLogger("ai-service.shopping.vector_store_v2")
 

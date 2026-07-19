@@ -147,7 +147,7 @@ async def init_runtime() -> bool:
 
         # ── 博查 MCP 客户端（非阻塞，失败不影响服务启动）──
         try:
-            from app.domain.knowledge import init_mcp_client
+            from app.infrastructure.clients.mcp_client import init_mcp_client
             mcp_ok = await init_mcp_client()
             if mcp_ok:
                 logger.info("博查 MCP 客户端就绪")

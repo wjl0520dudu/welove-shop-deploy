@@ -1,6 +1,6 @@
 from langchain_core.output_parsers import StrOutputParser
 import app.infrastructure.llm.llm
-from prompts import KNOWLEDGE_QA_PROMPT
+from app.prompts.knowledge_qa import KNOWLEDGE_QA_PROMPT
 
 
 def build_knowledge_qa_chain():

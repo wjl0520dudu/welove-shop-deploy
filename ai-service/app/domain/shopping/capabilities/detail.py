@@ -118,7 +118,7 @@ async def _load_product_detail_raw(product_id: int) -> Dict[str, Any]:
       PG 里没这个商品的 SKU 就返回空列表 —— 上层根据 facts["skus"] 是否为空决定
       是否报"暂无 SKU"。
     """
-    from app.domain.shopping.vector_store import get_product_milvus_store
+    from app.infrastructure.vectorstores.product.vector_store import get_product_milvus_store
 
     # ── 1. 从 Milvus 拿主档 ──
     try:
@@ -166,7 +166,7 @@ async def _load_product_detail_raw(product_id: int) -> Dict[str, Any]:
     try:
         from sqlalchemy import select
         from app.infrastructure.persistence.database import get_session_factory
-        from app.domain.shopping.orm_models import ProductSkuORM
+        from app.infrastructure.persistence.orm_models import ProductSkuORM
 
         session_factory = get_session_factory()
         async with session_factory() as session:
