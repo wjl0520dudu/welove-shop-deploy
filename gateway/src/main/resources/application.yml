@@ -9,14 +9,21 @@ spring:
     name: gateway
   cloud:
     nacos:
+      # 服务发现
       discovery:
-        server-addr: 127.0.0.1:8848
-        username: nacos
-        password: nacos
-        namespace: public
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        fail-fast: false
+      # 配置中心
       config:
-        import-check:
-          enabled: false
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        file-extension: yaml
+        refresh-enabled: true
 
     # ---------- 显式路由(Plan A: /api 归属网关层) ----------
     gateway:

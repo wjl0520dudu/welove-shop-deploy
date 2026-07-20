@@ -12,17 +12,33 @@ spring:
   application:
     name: user-service
 
-  # ---------- Nacos ----------
+  # ---------- Nacos 服务发现 + 配置中心(Modern 接入,Spring Cloud 2023+) ----------
+  # SCA 自带 NacosConfigDataLoader,通过 spring.config.import 加载。
+  # optional:nacos: 表示 Nacos 连不上时启动不阻塞,降级本地 application*.yml。
+  config:
+    import:
+      # 共享配置(所有服务共用:JWT / Feign / 日志级别)
+      - optional:nacos:nacos-common.yml?group=COMMON_GROUP&refreshEnabled=true
+      # 本服务私有配置(短信验证码 mock / Redis key)
+      - optional:nacos:nacos-user-service.yml?group=USER_GROUP&refreshEnabled=true
+
   cloud:
     nacos:
+      # 服务发现
       discovery:
-        server-addr: 127.0.0.1:8848
-        username: nacos
-        password: nacos
-        namespace: public
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        fail-fast: false
+      # 配置中心
       config:
-        import-check:
-          enabled: false                         # 骨架期不接 Nacos config,配置全部本地 yml
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        file-extension: yaml
+        refresh-enabled: true
 
   # ---------- PostgreSQL ----------
   datasource:

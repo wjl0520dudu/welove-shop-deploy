@@ -23,23 +23,34 @@ spring:
       max-file-size: 20MB
       max-request-size: 20MB
 
-  # ---------- 共享配置(从 common-storage 资源导入) ----------
-  # 继承 cloud.storage.* 默认值(bucket / endpoint / 凭证 env 注入等)
-  # 本服务差异化项(如下方 chat/ 前缀)在本文件内覆盖
+  # ---------- 配置导入(本地 + Nacos,顺序: 先本地,再 Nacos 覆盖) ----------
+  # 1. 本地云存储共享配置继承 cloud.storage.* 默认值(bucket / endpoint / 凭证 env 注入等)
+  # 2. Nacos 服务发现 + 配置中心(Modern 接入,Spring Cloud 2023+,SCA 自带 NacosConfigDataLoader)
   config:
-    import: classpath:META-INF/cloud-storage-shared.yml
+    import:
+      - classpath:META-INF/cloud-storage-shared.yml
+      # 共享配置(所有服务共用:JWT / Feign / 日志级别)
+      - optional:nacos:nacos-common.yml?group=COMMON_GROUP&refreshEnabled=true
+      # 本服务私有配置(SSE 超时 / 上下文窗口 / 上传限制)
+      - optional:nacos:nacos-chat-service.yml?group=CHAT_GROUP&refreshEnabled=true
 
-  # ---------- Nacos ----------
   cloud:
     nacos:
+      # 服务发现
       discovery:
-        server-addr: 127.0.0.1:8848
-        username: nacos
-        password: nacos
-        namespace: public
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        fail-fast: false
+      # 配置中心
       config:
-        import-check:
-          enabled: false
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        namespace: ${NACOS_NAMESPACE:public}
+        file-extension: yaml
+        refresh-enabled: true
 
   # ---------- PostgreSQL ----------
   datasource:
