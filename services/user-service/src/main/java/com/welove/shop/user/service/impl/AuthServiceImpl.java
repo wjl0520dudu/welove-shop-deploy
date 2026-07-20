@@ -175,7 +175,12 @@ public class AuthServiceImpl implements AuthService {
         return user;
     }
 
-    private Map<String, Object> generateTokenResponse(User user) {
+    @Override
+    public Map<String, Object> generateTokenResponse(User user) {
+        return generateTokenResponse0(user);
+    }
+
+    private Map<String, Object> generateTokenResponse0(User user) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("phone", user.getPhone());
         claims.put("username", user.getUsername());

@@ -26,6 +26,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "/auth/sendCode",
             "/auth/login",
             "/auth/refresh",
+            "/auth/test-login",      // 体验用户一键登录(频控 + 共享池,见 docs/plan/test-login.md)
             "/internal/**",          // 服务间 Feign 调用内核(Ph 后期与 Gateway 分层鉴权收窄)
             "/actuator/**",
             "/error"

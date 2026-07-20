@@ -57,6 +57,12 @@ public class User implements Serializable {
     /** 1=正常, 0=禁用。 */
     private Integer status;
 
+    /** 是否测试账号(由 POST /auth/test-login 创建)。 */
+    private Boolean isTest;
+
+    /** 最后登录时间(供清理任务判定长期未使用)。 */
+    private LocalDateTime lastLoginAt;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

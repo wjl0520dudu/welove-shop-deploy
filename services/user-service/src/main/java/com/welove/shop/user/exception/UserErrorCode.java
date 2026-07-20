@@ -24,4 +24,7 @@ public final class UserErrorCode {
     public static final int ACCOUNT_DISABLED = 20103;
     public static final int OLD_PASSWORD_WRONG = 20104;
     public static final int INVALID_TOKEN = 20105;
+
+    // ---------- 测试登录 ----------
+    public static final int TEST_LOGIN_RATE_LIMIT = 20201;
 }

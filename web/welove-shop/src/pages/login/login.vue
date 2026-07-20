@@ -25,6 +25,16 @@
 
       <button class="login-button" :loading="loading" :disabled="loading" @tap="handleGetCode">获取短信验证码</button>
 
+      <view class="divider-row">
+        <view class="line"></view>
+        <text class="or">或</text>
+        <view class="line"></view>
+      </view>
+
+      <button class="test-login-button" :loading="testLoading" :disabled="testLoading" @tap="handleTestLogin">
+        体验登录(无需手机号)
+      </button>
+
       <view class="agreement-row">
         <uni-icons type="checkbox-filled" size="15" color="#14b8a6" />
         <text>登录即表示同意用户协议和隐私政策</text>
@@ -34,11 +44,12 @@
 </template>
 
 <script>
-import { sendCode } from '../../api/auth'
+import { sendCode, testLogin } from '../../api/auth'
+import userStore from '../../store/user'
 
 export default {
   data() {
-    return { loading: false, phone: '', redirect: '' }
+    return { loading: false, phone: '', redirect: '', testLoading: false }
   },
   onLoad(query) {
     this.redirect = decodeURIComponent(query.redirect || '')
@@ -61,6 +72,33 @@ export default {
       } catch (error) {
       } finally {
         this.loading = false
+      }
+    },
+    /**
+     * 测试登录:一键跳过手机号+验证码,直接拿 token 进入系统。
+     * 服务端从 5 个共享测试账号池里轮询一个,频控由后端做(IP 1 分钟 5 次)。
+     * 设计文档:docs/plan/test-login.md
+     */
+    async handleTestLogin() {
+      if (this.testLoading) return
+      this.testLoading = true
+      try {
+        const data = await testLogin()
+        // data 结构:{ token, refreshToken, user, tokenType } — 同 /auth/login
+        await userStore.handleTestLogin(data)
+        uni.showToast({ title: '登录成功', icon: 'success' })
+        // 跳转到 redirect 或首页
+        const target = this.redirect || '/pages/product-list/product-list'
+        const tabPages = ['/pages/chat/chat', '/pages/product-list/product-list', '/pages/cart/cart', '/pages/profile/profile']
+        if (tabPages.includes(target.split('?')[0])) {
+          uni.switchTab({ url: target })
+        } else {
+          uni.redirectTo({ url: target })
+        }
+      } catch (error) {
+        // request 工具已经弹过 toast 了
+      } finally {
+        this.testLoading = false
       }
     }
   }
@@ -87,5 +125,9 @@ export default {
 .field { display: flex; align-items: center; gap: 14rpx; height: 96rpx; margin-bottom: 26rpx; padding: 0 24rpx; border: 1rpx solid #dbe5e3; border-radius: 20rpx; background: #f8fbfb; }
 .field-input { flex: 1; height: 96rpx; font-size: 32rpx; font-weight: 700; color: #1f2937; }
 .login-button { height: 94rpx; border-radius: 999rpx; background: linear-gradient(135deg, #14b8a6, #0f766e); color: #ffffff; font-size: 31rpx; font-weight: 900; line-height: 94rpx; box-shadow: 0 16rpx 34rpx rgba(20, 184, 166, 0.24); }
+.divider-row { display: flex; align-items: center; gap: 18rpx; margin: 28rpx 0 22rpx; }
+.divider-row .line { flex: 1; height: 1rpx; background: #dbe5e3; }
+.divider-row .or { color: #98a2b3; font-size: 24rpx; }
+.test-login-button { height: 80rpx; border-radius: 999rpx; background: #fff; color: #0f766e; font-size: 28rpx; font-weight: 800; line-height: 80rpx; border: 1rpx solid #99f6e4; box-shadow: 0 6rpx 14rpx rgba(20, 184, 166, 0.08); }
 .agreement-row { display: flex; align-items: center; justify-content: center; gap: 8rpx; margin-top: 28rpx; color: #667085; font-size: 23rpx; }
 </style>

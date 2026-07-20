@@ -37,6 +37,14 @@ export default {
     applyAuth(data)
     return data
   },
+  /**
+   * 测试登录:服务端已返回完整 { token, refreshToken, user },直接落本地即可。
+   * 与 login() 区别:不调用 loginApi,不走短信验证码。
+   */
+  async handleTestLogin(data) {
+    applyAuth(data)
+    return data
+  },
   async loadProfile() {
     const user = await getProfile()
     state.user = user

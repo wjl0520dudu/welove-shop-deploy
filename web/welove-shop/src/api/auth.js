@@ -9,6 +9,11 @@ export function register(data) {
 export function login(data) {
   return request({ url: '/api/user/auth/login', method: 'POST', data })
 }
+export function testLogin() {
+  // 体验用户一键登录:跳过手机号+验证码,直接拿 token
+  // 服务端:共享 5 个测试账号池,Redis 频控(同 IP 1 分钟 5 次,全局 100 次)
+  return request({ url: '/api/user/auth/test-login', method: 'POST' })
+}
 export function getProfile() {
   return request({ url: '/api/user/auth/profile', method: 'GET' })
 }
