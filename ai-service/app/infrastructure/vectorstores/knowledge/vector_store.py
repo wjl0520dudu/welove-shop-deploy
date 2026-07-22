@@ -119,6 +119,36 @@ def _build_fields(dim: int) -> list[FieldSchema]:
     ]
 
 
+# ── 实验用独立 schema builder（不动生产代码）──────────────────────────────
+def _build_fields_fixed_only(dim: int) -> list[FieldSchema]:
+    """固定分块（CharacterTextSplitter）专用 schema：10字段，无 parent_id/child_index。"""
+    return [
+        FieldSchema(name="pk", dtype=DataType.INT64, is_primary=True, auto_id=True),
+        FieldSchema(
+            name="text",
+            dtype=DataType.VARCHAR,
+            max_length=65535,
+            enable_analyzer=True,
+            analyzer_params=_ANALYZER_PARAMS,
+        ),
+        FieldSchema(name="dense_vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
+        FieldSchema(name="sparse_vector", dtype=DataType.SPARSE_FLOAT_VECTOR),
+        FieldSchema(name="doc_id", dtype=DataType.INT64),
+        FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=32),
+        FieldSchema(name="chunk_type", dtype=DataType.VARCHAR, max_length=32),
+        FieldSchema(name="category_id", dtype=DataType.INT64),
+        FieldSchema(name="product_id", dtype=DataType.INT64),
+        FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
+        FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=256),
+        FieldSchema(name="chunk_index", dtype=DataType.INT64),
+    ]
+
+
+def _build_fields_recursive_only(dim: int) -> list[FieldSchema]:
+    """递归分块（RecursiveCharacterTextSplitter）专用 schema：10字段，无 parent_id/child_index。"""
+    return _build_fields_fixed_only(dim)  # schema 结构完全相同，仅分块算法不同
+
+
 # 插入时**不写 sparse_vector**（Milvus BM25 Function 自动生成），
 # 也**不写 pk**（auto_id）。以下就是插入端可控字段。
 INSERT_FIELDS = [
@@ -129,6 +159,13 @@ INSERT_FIELDS = [
     "parent_id", "child_index",
 ]
 LEGACY_INSERT_FIELDS = [field for field in INSERT_FIELDS if field not in {"parent_id", "child_index"}]
+
+
+# ── 实验用 insert fields（与上述 schema builder 对应）──────────────────────
+# 固定分块 & 递归分块均使用相同的 10 字段 insert（无 parent_id/child_index）
+INSERT_FIELDS_FIXED_ONLY = list(LEGACY_INSERT_FIELDS)
+INSERT_FIELDS_RECURSIVE_ONLY = list(LEGACY_INSERT_FIELDS)
+INSERT_FIELDS_PARENT_CHILD_ONLY = list(INSERT_FIELDS)
 
 # search / hybrid_search 用的 output_fields（不含向量本身）
 SCALAR_FIELDS = [
