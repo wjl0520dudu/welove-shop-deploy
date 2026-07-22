@@ -21,7 +21,7 @@ import java.util.List;
  * 骨架期只返回 productId,Product 展示字段留给后续 Feign 补齐。
  */
 @RestController
-@RequestMapping("/api/user/favorites")
+@RequestMapping("/favorites")
 @RequiredArgsConstructor
 public class UserFavoriteController {
 

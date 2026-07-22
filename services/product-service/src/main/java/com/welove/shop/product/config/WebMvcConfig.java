@@ -23,25 +23,23 @@ public class WebMvcConfig implements WebMvcConfigurer {
     private final JwtProperties jwtProperties;
 
     /**
-     * 免鉴权路径 —— 商品浏览类 GET 接口全匿名。
+     * 免鉴权路径 —— 商品浏览类 GET 接口全匿名(网关 StripPrefix=2 后收到的路径,无 /api 前缀)。
      * <p>
-     * 提交评价 POST /api/product/{id}/reviews 不在白名单,拦截器解析 token 后由
+     * 提交评价 POST /product/{id}/reviews 不在白名单,拦截器解析 token 后由
      * ProductResourceController.submitReview 校验 UserContext。
-     * 评价列表 GET 走 /api/product/{id} 详情聚合,不单独暴露。
-     * 推荐日志相关 /api/recommend-log/** 全部需登录,不在白名单。
      */
     private static final List<String> WHITELIST = List.of(
-            "/api/category/**",
-            "/api/product/list",
-            "/api/product/search",
-            "/api/product/hot",
-            "/api/product/batch",          // 内部 Feign 批量查商品(骨架期免登录)
-            "/api/product/sku/batch",      // 内部 Feign 批量查 SKU(骨架期免登录)
-            "/api/product/*",              // /api/product/{id} 详情聚合(含 reviews)
-            "/api/product/*/skus",
-            "/api/product/*/images",
-            "/api/product/*/faqs",
-            "/api/internal/**",            // 内部统计接口(admin-bff Dashboard Feign 调)
+            "/category/**",
+            "/product/list",
+            "/product/search",
+            "/product/hot",
+            "/product/batch",          // 内部 Feign 批量查商品(骨架期免登录)
+            "/product/sku/batch",      // 内部 Feign 批量查 SKU(骨架期免登录)
+            "/product/*",              // /product/{id} 详情聚合(含 reviews)
+            "/product/*/skus",
+            "/product/*/images",
+            "/product/*/faqs",
+            "/internal/**",            // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );
@@ -55,7 +53,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         JwtInterceptor interceptor = new JwtInterceptor(jwtUtil, jwtProperties.getHeader(), WHITELIST);
         registry.addInterceptor(interceptor)
-                .addPathPatterns("/api/**")
+                .addPathPatterns("/**")
                 .excludePathPatterns(WHITELIST);
     }
 }

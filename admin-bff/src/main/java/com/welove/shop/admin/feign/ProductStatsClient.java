@@ -6,6 +6,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 
 @FeignClient(name = "product-service", contextId = "productStatsClient")
 public interface ProductStatsClient {
-    @GetMapping("/api/internal/product/count")
+    @GetMapping("/internal/product/count")
     Result<Long> count();
 }

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 路径 /api/internal/user/** 全部走白名单,不校验 JWT(骨架期)。
  */
 @RestController
-@RequestMapping("/api/internal/user")
+@RequestMapping("/internal/user")
 @RequiredArgsConstructor
 public class InternalUserController {
 

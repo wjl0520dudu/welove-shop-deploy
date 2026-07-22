@@ -18,7 +18,7 @@ import java.util.List;
  * 内部统计接口 —— 供 admin-bff Dashboard Feign 调用。
  */
 @RestController
-@RequestMapping("/api/internal/order")
+@RequestMapping("/internal/order")
 @RequiredArgsConstructor
 public class InternalOrderController {
 

@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 全部需登录。
  */
 @RestController
-@RequestMapping("/api/order")
+@RequestMapping("/order")
 @RequiredArgsConstructor
 public class OrderController {
 

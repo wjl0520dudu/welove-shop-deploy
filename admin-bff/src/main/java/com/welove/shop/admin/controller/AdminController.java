@@ -15,10 +15,11 @@ import java.util.Map;
 /**
  * 管理端 Controller —— 登录 + Dashboard 入口。
  * <p>
- * {@code /api/admin/login} 免鉴权,其他 {@code /api/admin/**} 需 role=ADMIN。
+ * {@code /login} 免鉴权,其他需 role=ADMIN。
+ * 网关 StripPrefix=2 剥离 /api/admin,故此 Controller 收 /login。
  */
 @RestController
-@RequestMapping("/api/admin")
+@RequestMapping("")
 @RequiredArgsConstructor
 public class AdminController {
 

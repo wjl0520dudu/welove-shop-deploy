@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  * </ul>
  */
 @RestController
-@RequestMapping("/api/internal")
+@RequestMapping("/internal")
 @RequiredArgsConstructor
 public class InternalAddressController {
 

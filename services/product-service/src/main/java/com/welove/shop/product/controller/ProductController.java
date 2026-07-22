@@ -21,7 +21,7 @@ import java.util.List;
  * 提交评价的接口(POST /api/product/{id}/reviews)在 ReviewController,需登录。
  */
 @RestController
-@RequestMapping("/api/product")
+@RequestMapping("/product")
 @RequiredArgsConstructor
 public class ProductController {
 

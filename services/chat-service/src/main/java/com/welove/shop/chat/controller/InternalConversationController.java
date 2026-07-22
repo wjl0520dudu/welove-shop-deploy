@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 内部统计接口 —— 供 admin-bff Dashboard Feign 调用。
  */
 @RestController
-@RequestMapping("/api/internal/conversation")
+@RequestMapping("/internal/conversation")
 @RequiredArgsConstructor
 public class InternalConversationController {
 

@@ -24,4 +24,12 @@ public interface AuthService {
 
     /** 更新用户资料;仅非 null / 非空字段被写入。 */
     User updateUserInfo(UpdateUserRequest request);
+
+    /**
+     * 为指定用户生成登录响应(token + refreshToken + user + tokenType)。
+     * <p>
+     * 公开此方法以供 {@link TestLoginService} 等"已经有 user 实体但不需要走
+     * 完整 login/sms 流程"的场景复用,避免重复 token 生成逻辑。
+     */
+    Map<String, Object> generateTokenResponse(User user);
 }

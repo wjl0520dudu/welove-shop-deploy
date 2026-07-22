@@ -19,7 +19,7 @@ import java.util.List;
  * 全部匿名可访问(商品浏览无需登录)。
  */
 @RestController
-@RequestMapping("/api/category")
+@RequestMapping("/category")
 @RequiredArgsConstructor
 public class CategoryController {
 

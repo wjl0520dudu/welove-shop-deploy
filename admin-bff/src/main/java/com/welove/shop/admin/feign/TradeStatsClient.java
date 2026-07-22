@@ -8,9 +8,9 @@ import java.math.BigDecimal;
 
 @FeignClient(name = "trade-service", contextId = "tradeStatsClient")
 public interface TradeStatsClient {
-    @GetMapping("/api/internal/order/count")
+    @GetMapping("/internal/order/count")
     Result<Long> count();
 
-    @GetMapping("/api/internal/order/today-revenue")
+    @GetMapping("/internal/order/today-revenue")
     Result<BigDecimal> todayRevenue();
 }

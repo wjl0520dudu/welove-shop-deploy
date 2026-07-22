@@ -70,9 +70,10 @@ env/
 ENV/
 .python-version
 
-# -------- Node / 前端(未来接入前端时会用到) --------
+# -------- Node / 前端(uni-app + H5) --------
 node_modules/
 dist/
+unpackage/
 .next/
 .nuxt/
 .parcel-cache/
@@ -162,8 +163,19 @@ admin-bff/target/
 /infra/volumes/
 /infra/application-dev.yml
 
-# ai-service/ 目前仍是空壳(Python 代码后期正式入库),先忽略
-/ai-service/
+# -------- application-dev.yml(本地开发覆盖配置,不入库) --------
+# 所有人共用 application.yml 的默认值,本地差异项(端口/DB密码/mock开关)放
+# application-dev.yml 各自维护。部署时用 SPRING_PROFILES_ACTIVE=prod 覆盖。
+# 见 services/*/src/main/resources/application.yml 末尾的 profiles.active
+**/application-dev.yml
+**/application-dev.yaml
+**/application-local.yml
+**/application-local.yaml
+
+# ai-service/ 正式入库,仅排除临时调试文件
+/ai-service/tmp_debug/
+/ai-service/tt
+/ai-service/evals/reports/
 
 # 单体附带的第三方二进制/文档(如果本地还留着)
 /backend/
@@ -175,3 +187,22 @@ admin-bff/target/
 /db/*.py
 /db/*.md
 # db/scripts/ 白名单:微服务阶段一次性迁移脚本(如 export_seed.py)入库
+# -------- Token / 测试临时文件 --------
+.admin_token.txt
+.token_resp.json
+.user_login_resp.json
+.user_token.txt
+web/package-lock.json
+
+# -------- Local evaluation / planning notes (do not commit) --------
+/docs/agent-evaluation-playbook.local.md
+/docs/phase-test-results.local.md
+/docs/plan/agent-eval-comparison-v2.2-v2.4.md
+/ai-service/.pytest_cache/
+/ai-service/.pytest_temp/
+
+# -------- CI/CD / test artifacts (exported data, snapshots, local DB) --------
+/ai-service/tests/.local.sql
+/ai-service/tests/*.local.py
+/ai-service/tests/*.local.json
+/ai-service/tests/product_*.csv

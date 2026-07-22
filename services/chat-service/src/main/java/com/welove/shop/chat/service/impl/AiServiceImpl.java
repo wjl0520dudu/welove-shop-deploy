@@ -34,10 +34,10 @@ public class AiServiceImpl implements AiService {
         body.put("username", username);
         body.put("is_admin", false);
         try {
-            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/ask", body, Map.class);
+            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/assistant/run", body, Map.class);
             return resp != null ? resp : Map.of("answer", "AI 服务暂不可用");
         } catch (Exception e) {
-            log.warn("[AiService] /ask failed: {}", e.getMessage());
+            log.warn("[AiService] /assistant/run failed: {}", e.getMessage());
             return Map.of("answer", "AI 服务暂不可用,请稍后再试");
         }
     }
@@ -60,19 +60,25 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override @Async
-    public void parseDocument(String filePath, Long docId) {
+    public void parseDocument(String downloadUrl, String objectKey, Long docId) {
         try {
-            Map<String, Object> body = Map.of("file_path", filePath, "doc_id", docId);
-            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/parse", body, Map.class);
+            // 走 ai-service 的 /api/rag/admin/parse 端点,支持 download_url 下载
+            Map<String, Object> body = Map.of(
+                    "download_url", downloadUrl,
+                    "doc_id", docId,
+                    "title", "",
+                    "doc_type", "md"
+            );
+            Map<String, Object> resp = restTemplate.postForObject(aiUrl + "/rag/admin/parse", body, Map.class);
             KnowledgeDoc doc = knowledgeDocMapper.selectById(docId);
             if (doc != null) {
-                boolean ok = resp != null && !resp.containsKey("error");
+                boolean ok = resp != null && "success".equals(resp.get("status"));
                 doc.setStatus(ok ? "COMPLETED" : "FAILED");
-                if (!ok) doc.setErrorMessage(String.valueOf(resp.getOrDefault("error", "unknown")));
+                if (!ok) doc.setErrorMessage(String.valueOf(resp.getOrDefault("detail", "unknown")));
                 knowledgeDocMapper.updateById(doc);
             }
         } catch (Exception e) {
-            log.warn("[AiService] /parse failed: {}", e.getMessage());
+            log.warn("[AiService] /rag/admin/parse failed: {}", e.getMessage());
             KnowledgeDoc doc = knowledgeDocMapper.selectById(docId);
             if (doc != null) { doc.setStatus("FAILED"); doc.setErrorMessage(e.getMessage()); knowledgeDocMapper.updateById(doc); }
         }
@@ -80,7 +86,8 @@ public class AiServiceImpl implements AiService {
 
     @Override @Async
     public void deleteDoc(Long docId) {
-        try { restTemplate.postForObject(aiUrl + "/delete", Map.of("doc_id", docId), Map.class); }
-        catch (Exception e) { log.warn("[AiService] /delete failed: {}", e.getMessage()); }
+        try {
+            restTemplate.postForObject(aiUrl + "/rag/admin/delete", Map.of("doc_id", docId), Map.class);
+        } catch (Exception e) { log.warn("[AiService] /rag/admin/delete failed: {}", e.getMessage()); }
     }
 }

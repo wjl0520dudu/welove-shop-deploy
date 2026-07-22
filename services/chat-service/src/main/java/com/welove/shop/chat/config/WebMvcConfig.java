@@ -10,14 +10,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.List;
 
+/**
+ * chat-service Web 配置:注册 JWT 拦截器 + 白名单(网关 StripPrefix=2 后收到的路径,无 /api 前缀)。
+ */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
     private final JwtUtil jwtUtil;
     private final JwtProperties jwtProperties;
 
     private static final List<String> WHITELIST = List.of(
-            "/api/notice/latest",
-            "/api/internal/**",    // 内部统计接口(admin-bff Dashboard Feign 调)
+            "/notice/latest",
+            "/internal/**",    // 内部统计接口(admin-bff Dashboard Feign 调)
             "/actuator/**",
             "/error"
     );
@@ -29,6 +32,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(new JwtInterceptor(jwtUtil, jwtProperties.getHeader(), WHITELIST))
-                .addPathPatterns("/api/**").excludePathPatterns(WHITELIST);
+                .addPathPatterns("/**").excludePathPatterns(WHITELIST);
     }
 }

@@ -12,9 +12,10 @@ import org.springframework.web.bind.annotation.RestController;
  * Dashboard 首页 —— 4 大 count + 今日营收。
  * <p>
  * 全部通过 Feign 聚合 4 个下游服务的内部 count 接口。
+ * 网关 StripPrefix=2 剥离 /api/admin,故此 Controller 收 /dashboard。
  */
 @RestController
-@RequestMapping("/api/admin/dashboard")
+@RequestMapping("/dashboard")
 @RequiredArgsConstructor
 public class DashboardController {
 

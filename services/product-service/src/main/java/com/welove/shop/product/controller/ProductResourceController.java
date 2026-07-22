@@ -35,7 +35,7 @@ import java.util.List;
  * 只暴露 POST /api/product/{id}/reviews 用于提交评价,需登录。
  */
 @RestController
-@RequestMapping("/api/product")
+@RequestMapping("/product")
 @RequiredArgsConstructor
 public class ProductResourceController {
 
