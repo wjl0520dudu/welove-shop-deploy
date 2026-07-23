@@ -1,0 +1,93 @@
+name: Release to Tencent CVM
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: welove-gateway, module: gateway}
+          - {name: welove-user-service, module: services/user-service}
+          - {name: welove-product-service, module: services/product-service}
+          - {name: welove-trade-service, module: services/trade-service}
+          - {name: welove-chat-service, module: services/chat-service}
+          - {name: welove-admin-bff, module: admin-bff}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.java
+          build-args: MODULE=${{ matrix.module }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.ref_name }}
+
+  build-other:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {name: welove-ai-service, file: ai-service/Dockerfile}
+          - {name: welove-admin-web, file: deploy/Dockerfile.admin-web}
+          - {name: welove-shop-web, file: deploy/Dockerfile.shop-web}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.ref_name }}
+
+  deploy:
+    needs: [build, build-other]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: deploy/docker-compose.prod.yml,deploy/nginx.conf.template
+          target: /opt/welove-shop/release
+          strip_components: 1
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            mkdir -p /opt/welove-shop/nginx
+            cp /opt/welove-shop/release/docker-compose.prod.yml /opt/welove-shop/docker-compose.prod.yml
+            cp /opt/welove-shop/release/nginx.conf.template /opt/welove-shop/nginx/default.conf.template
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ github.ref_name }}/' /opt/welove-shop/config/production.env
+            docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml pull
+            docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f

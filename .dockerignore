@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+**/target
+**/__pycache__
+**/.pytest_cache
+infra/volumes
+ai-service/.env
+*.log
+docs
