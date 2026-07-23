@@ -1,0 +1,188 @@
+name: welove-shop
+
+x-java: &java
+  restart: unless-stopped
+  env_file:
+    - /opt/welove-shop/config/production.env
+    - /opt/welove-shop/secrets/production.secrets.env
+  environment:
+    NACOS_SERVER_ADDR: nacos:8848
+    SPRING_DATASOURCE_USERNAME: welove_app
+    SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+  networks: [internal]
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: welove_shop_search
+      POSTGRES_USER: welove_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U welove_app -d welove_shop_search"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes: [redis_data:/data]
+    mem_limit: 128m
+    networks: [internal]
+
+  nacos:
+    image: nacos/nacos-server:v2.5.1
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+    volumes: [nacos_data:/home/nacos/data]
+    ports: ["127.0.0.1:8848:8848"]
+    mem_limit: 768m
+    networks: [internal]
+
+  user-service:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-user-service:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=user_svc&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: welove_app
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
+    mem_limit: 512m
+
+  product-service:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-product-service:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=product_svc&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: welove_app
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
+    mem_limit: 512m
+
+  trade-service:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-trade-service:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=trade_svc&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: welove_app
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
+    mem_limit: 512m
+
+  chat-service:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-chat-service:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=chat_svc&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: welove_app
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI_SERVICE_URL: http://ai-service:8000/api
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}, ai-service: {condition: service_started}}
+    mem_limit: 512m
+
+  admin-bff:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-admin-bff:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=admin_svc&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: welove_app
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {postgres: {condition: service_healthy}, nacos: {condition: service_started}}
+    mem_limit: 512m
+
+  gateway:
+    <<: *java
+    image: ghcr.io/${GHCR_OWNER}/welove-gateway:${IMAGE_TAG}
+    environment:
+      NACOS_SERVER_ADDR: nacos:8848
+      JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
+    depends_on: {nacos: {condition: service_started}}
+    mem_limit: 512m
+
+  ai-service:
+    image: ghcr.io/${GHCR_OWNER}/welove-ai-service:${IMAGE_TAG}
+    restart: unless-stopped
+    env_file:
+      - /opt/welove-shop/config/production.env
+      - /opt/welove-shop/secrets/production.secrets.env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: welove_app
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
+      PG_NAME: welove_shop_search
+      PG_BUSINESS_DB: welove_shop_search
+      JAVA_API_BASE_URL: http://gateway:8080
+      ALLOWED_ORIGINS: https://${SHOP_DOMAIN},https://${ADMIN_DOMAIN}
+    depends_on: {postgres: {condition: service_healthy}}
+    mem_limit: 1g
+    networks: [internal]
+
+  shop-web:
+    image: ghcr.io/${GHCR_OWNER}/welove-shop-web:${IMAGE_TAG}
+    restart: unless-stopped
+    env_file:
+      - /opt/welove-shop/config/production.env
+    networks: [internal]
+
+  admin-web:
+    image: ghcr.io/${GHCR_OWNER}/welove-admin-web:${IMAGE_TAG}
+    restart: unless-stopped
+    env_file:
+      - /opt/welove-shop/config/production.env
+    networks: [internal]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    env_file:
+      - /opt/welove-shop/config/production.env
+      - /opt/welove-shop/secrets/production.secrets.env
+    environment:
+      SHOP_DOMAIN: ${SHOP_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+    # Start with HTTP for the first deployment. Add :443 after Certbot/HTTPS
+    # has been configured as described in the deployment guide.
+    ports: ["80:80"]
+    volumes:
+      - /opt/welove-shop/nginx:/etc/nginx/templates:ro
+      - /opt/welove-shop/certbot/conf:/etc/letsencrypt:ro
+      - /opt/welove-shop/certbot/www:/var/www/certbot:ro
+    depends_on: [gateway, shop-web, admin-web]
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  nacos_data:

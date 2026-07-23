@@ -1,0 +1,11 @@
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY web/welove-shop/package*.json ./
+RUN npm install
+COPY web/welove-shop/ ./
+RUN npm run build:h5
+
+FROM nginx:1.27-alpine
+COPY --from=build /app/dist/build/h5 /usr/share/nginx/html
+COPY deploy/frontend-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN chmod +x /docker-entrypoint.d/40-runtime-config.sh

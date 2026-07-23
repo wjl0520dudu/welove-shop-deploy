@@ -1,0 +1,34 @@
+server {
+  listen 80;
+  server_name ${SHOP_DOMAIN};
+  client_max_body_size 50m;
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { proxy_pass http://shop-web:80; proxy_set_header Host $host; }
+  location /api/ {
+    proxy_pass http://gateway:8080;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+server {
+  listen 80;
+  server_name ${ADMIN_DOMAIN};
+  client_max_body_size 50m;
+  location /.well-known/acme-challenge/ { root /var/www/certbot; }
+  location / { proxy_pass http://admin-web:80; proxy_set_header Host $host; }
+  location /api/ {
+    proxy_pass http://gateway:8080;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}

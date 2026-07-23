@@ -76,7 +76,7 @@ export function ellipsis(s, len = 50) {
  * 绝对 URL(http(s)://) 原样返回；
  * 相对路径 + 文件名拼 CDN 前缀。
  */
-const IMAGE_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_IMAGE_BASE_URL
+const IMAGE_BASE_URL = window.__WLS_RUNTIME_CONFIG__?.IMAGE_BASE_URL || (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_IMAGE_BASE_URL)
   || 'https://liangwenjun.oss-cn-hangzhou.aliyuncs.com';
 
 export function buildImageUrl(url) {

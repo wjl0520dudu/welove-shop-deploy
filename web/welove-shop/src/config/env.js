@@ -26,6 +26,7 @@ export const API_BASE_URL = ''
  * 这些历史数据走本变量拼接;后续所有新图片应直接由后端返回完整 URL,本变量逐步废弃。
  */
 export const IMAGE_BASE_URL =
+  window.__WLS_RUNTIME_CONFIG__?.IMAGE_BASE_URL ||
   // 1. uni-app 编译期注入的环境变量(推荐 — 不同构建产物走不同配置)
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_IMAGE_BASE_URL) ||
   // 2. 兜底默认值:开发期指向 OSS 图片主机
