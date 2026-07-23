@@ -82,6 +82,9 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # The first CVM deployment pulls every image from GHCR and can be
+          # slow on a China-region server.  The action defaults to 10 minutes.
+          command_timeout: 60m
           script: |
             set -e
             mkdir -p /opt/welove-shop/nginx
