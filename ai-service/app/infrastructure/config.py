@@ -52,6 +52,9 @@ class Config:
 
     # ── Milvus ──
     MILVUS_URL = os.getenv("MILVUS_URL", "http://127.0.0.1:19530")
+    # Zilliz Cloud uses the same PyMilvus API but requires a token.  Keep this
+    # optional so local unauthenticated Milvus deployments remain compatible.
+    MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
     MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "my_rag_collection")
     # 稠密向量维度：DashScope text-embedding-v4 支持 2048/1536/1024/768/512/256/128/64，
     # 我们锁 1024（在检索质量和存储/召回速度间平衡最好）。

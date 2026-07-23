@@ -209,8 +209,11 @@ class ProductMilvusStore:
 
     # ── 连接 + 建表 + 建索引 ─────────────────────────────────
     def _connect(self) -> None:
-        connections.connect(uri=self.milvus_url)
-        milvus_client = MilvusClient(uri=self.milvus_url)
+        connection_kwargs = {"uri": self.milvus_url}
+        if config.MILVUS_TOKEN:
+            connection_kwargs["token"] = config.MILVUS_TOKEN
+        connections.connect(**connection_kwargs)
+        milvus_client = MilvusClient(**connection_kwargs)
         self.store = milvus_client
 
         if milvus_client.has_collection(self.collection_name):
