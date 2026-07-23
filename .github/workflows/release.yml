@@ -56,11 +56,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # A merge conflict intentionally fails the workflow before any build or deployment.
-          git merge --no-ff --no-edit "$SOURCE_COMMIT"
+          git merge --no-ff --no-commit "$SOURCE_COMMIT"
           # Public-repository workflows are not part of the private deployment
           # repository. Keeping the private workflow tree also avoids requiring
           # elevated workflow-write permission for the default GITHUB_TOKEN.
           git restore --source=HEAD --staged --worktree -- .github/workflows
+          git commit --no-edit
           git tag -a "$RELEASE_TAG" -m "Release ${RELEASE_TAG} from ${SOURCE_REPOSITORY}@${SOURCE_COMMIT}"
           git push origin HEAD:main "refs/tags/$RELEASE_TAG"
 
