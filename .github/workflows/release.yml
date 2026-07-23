@@ -1,74 +1,208 @@
-name: Release to Tencent CVM
+name: Private production release
 
 on:
-  push:
-    tags: ['v*']
+  repository_dispatch:
+    types: [main-release]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing private release tag to deploy (rollback or redeploy)
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+env:
+  SOURCE_REPOSITORY: wjl0520dudu/welove-shop-agt
+
 jobs:
-  build:
+  sync-main-tag:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      private_sha: ${{ steps.sync.outputs.private_sha }}
+      release_tag: ${{ steps.sync.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: sync
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.tag }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REPO" == "$SOURCE_REPOSITORY" ]] || { echo "Unexpected source repository" >&2; exit 1; }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "Invalid release tag" >&2; exit 1; }
+          ! git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null || { echo "Private tag already exists: $RELEASE_TAG" >&2; exit 1; }
+
+          git remote add source "https://github.com/${SOURCE_REPOSITORY}.git"
+          git fetch --no-tags source "refs/heads/main:refs/remotes/source/main"
+          git fetch --no-tags source "refs/tags/${RELEASE_TAG}:refs/tags/incoming/${RELEASE_TAG}"
+          SOURCE_COMMIT="$(git rev-parse "refs/tags/incoming/${RELEASE_TAG}^{commit}")"
+          [[ "$SOURCE_COMMIT" == "$SOURCE_SHA" ]] || { echo "Tag commit does not match dispatched SHA" >&2; exit 1; }
+          git merge-base --is-ancestor "$SOURCE_COMMIT" source/main || { echo "Source tag is not reachable from source main" >&2; exit 1; }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # A merge conflict intentionally fails the workflow before any build or deployment.
+          git merge --no-ff --no-edit "$SOURCE_COMMIT"
+          git tag -a "$RELEASE_TAG" -m "Release ${RELEASE_TAG} from ${SOURCE_REPOSITORY}@${SOURCE_COMMIT}"
+          git push origin HEAD:main "refs/tags/$RELEASE_TAG"
+
+          echo "private_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  prepare-build:
+    needs: sync-main-tag
+    if: github.event_name == 'repository_dispatch' && needs.sync-main-tag.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      changed_names: ${{ steps.plan.outputs.changed_names }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync-main-tag.outputs.private_sha }}
+          fetch-depth: 0
+
+      - id: plan
+        env:
+          RELEASE_TAG: ${{ needs.sync-main-tag.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(git tag --list 'v*' --sort=-version:refname | grep -Fvx "$RELEASE_TAG" | head -n 1 || true)"
+          if [[ -z "$previous_tag" ]]; then
+            changes='first-release'
+          else
+            changes="$(git diff --name-only "$previous_tag" HEAD)"
+          fi
+
+          selected=()
+          add() { [[ " ${selected[*]} " == *" $1 "* ]] || selected+=("$1"); }
+          has_change() { grep -Eq "$1" <<<"$changes"; }
+
+          if [[ -z "$previous_tag" ]] || has_change '^(common/|gateway/|pom.xml$|mvnw$|mvnw.cmd$|\.mvn/|deploy/Dockerfile\.java$)'; then
+            add welove-gateway; add welove-user-service; add welove-product-service
+            add welove-trade-service; add welove-chat-service; add welove-admin-bff
+          else
+            has_change '^gateway/' && add welove-gateway
+            has_change '^services/user-service/' && add welove-user-service
+            has_change '^services/product-service/' && add welove-product-service
+            has_change '^services/trade-service/' && add welove-trade-service
+            has_change '^services/chat-service/' && add welove-chat-service
+            has_change '^admin-bff/' && add welove-admin-bff
+          fi
+          [[ -z "$previous_tag" ]] || has_change '^ai-service/' && add welove-ai-service
+          [[ -z "$previous_tag" ]] || has_change '^(web/admin-web/|deploy/Dockerfile\.admin-web|deploy/frontend-runtime-config\.sh)' && add welove-admin-web
+          [[ -z "$previous_tag" ]] || has_change '^(web/welove-shop/|deploy/Dockerfile\.shop-web|deploy/frontend-runtime-config\.sh)' && add welove-shop-web
+
+          matrix='{"include":[]}'
+          for name in "${selected[@]}"; do
+            case "$name" in
+              welove-gateway) module=gateway; kind=java ;;
+              welove-user-service) module=services/user-service; kind=java ;;
+              welove-product-service) module=services/product-service; kind=java ;;
+              welove-trade-service) module=services/trade-service; kind=java ;;
+              welove-chat-service) module=services/chat-service; kind=java ;;
+              welove-admin-bff) module=admin-bff; kind=java ;;
+              welove-ai-service) module=''; kind=ai ;;
+              welove-admin-web) module=''; kind=admin-web ;;
+              welove-shop-web) module=''; kind=shop-web ;;
+            esac
+            matrix="$(jq -c --arg name "$name" --arg module "$module" --arg kind "$kind" '.include += [{name:$name,module:$module,kind:$kind}]' <<<"$matrix")"
+          done
+          # GitHub Actions cannot run an empty matrix; this no-op keeps the job valid.
+          if [[ ${#selected[@]} -eq 0 ]]; then
+            matrix='{"include":[{"name":"noop","module":"","kind":"noop"}]}'
+          fi
+
+          changed_names="$(IFS=,; echo "${selected[*]}")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "changed_names=$changed_names" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  build-changed:
+    needs: prepare-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-build.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync-main-tag.outputs.private_sha }}
+      - uses: docker/login-action@v3
+        if: matrix.kind != 'noop'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+        if: matrix.kind != 'noop'
+      - name: Build and push changed image
+        if: matrix.kind != 'noop'
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ needs.prepare-build.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.kind }}' in
+            java) docker buildx build --push -f deploy/Dockerfile.java --build-arg MODULE='${{ matrix.module }}' -t "$IMAGE" . ;;
+            ai) docker buildx build --push -f ai-service/Dockerfile -t "$IMAGE" ai-service ;;
+            admin-web) docker buildx build --push -f deploy/Dockerfile.admin-web -t "$IMAGE" . ;;
+            shop-web) docker buildx build --push -f deploy/Dockerfile.shop-web -t "$IMAGE" . ;;
+          esac
+
+  promote-unchanged:
+    needs: [prepare-build, build-changed]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {name: welove-gateway, module: gateway}
-          - {name: welove-user-service, module: services/user-service}
-          - {name: welove-product-service, module: services/product-service}
-          - {name: welove-trade-service, module: services/trade-service}
-          - {name: welove-chat-service, module: services/chat-service}
-          - {name: welove-admin-bff, module: admin-bff}
+        name: [welove-gateway, welove-user-service, welove-product-service, welove-trade-service, welove-chat-service, welove-admin-bff, welove-ai-service, welove-admin-web, welove-shop-web]
     steps:
-      - uses: actions/checkout@v4
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.java
-          build-args: MODULE=${{ matrix.module }}
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.ref_name }}
-
-  build-other:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - {name: welove-ai-service, file: ai-service/Dockerfile, context: ai-service}
-          - {name: welove-admin-web, file: deploy/Dockerfile.admin-web, context: .}
-          - {name: welove-shop-web, file: deploy/Dockerfile.shop-web, context: .}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ github.ref_name }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Re-tag the previous stable image when unchanged
+        env:
+          PREVIOUS_TAG: ${{ needs.prepare-build.outputs.previous_tag }}
+          CHANGED_NAMES: ${{ needs.prepare-build.outputs.changed_names }}
+          RELEASE_TAG: ${{ needs.prepare-build.outputs.release_tag }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$PREVIOUS_TAG" ]] || exit 0
+          [[ ",$CHANGED_NAMES," == *",${{ matrix.name }},"* ]] && exit 0
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:$RELEASE_TAG" "$IMAGE_REPOSITORY:$PREVIOUS_TAG"
 
   deploy:
-    needs: [build, build-other]
+    needs: [sync-main-tag, prepare-build, build-changed, promote-unchanged]
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync-main-tag.outputs.private_sha }}
       - uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -82,15 +216,59 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # The first CVM deployment pulls every image from GHCR and can be
-          # slow on a China-region server.  The action defaults to 10 minutes.
           command_timeout: 60m
           script: |
             set -e
             mkdir -p /opt/welove-shop/nginx
             cp /opt/welove-shop/release/docker-compose.prod.yml /opt/welove-shop/docker-compose.prod.yml
             cp /opt/welove-shop/release/nginx.conf.template /opt/welove-shop/nginx/default.conf.template
-            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ github.ref_name }}/' /opt/welove-shop/config/production.env
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ needs.prepare-build.outputs.release_tag }}/' /opt/welove-shop/config/production.env
             docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml pull
             docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml up -d --remove-orphans
             docker image prune -f
+
+  keep-three-release-images:
+    needs: deploy
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [welove-gateway, welove-user-service, welove-product-service, welove-trade-service, welove-chat-service, welove-admin-bff, welove-ai-service, welove-admin-web, welove-shop-web]
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ matrix.package }}
+          package-type: container
+          min-versions-to-keep: 3
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  rollback:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: deploy/docker-compose.prod.yml,deploy/nginx.conf.template
+          target: /opt/welove-shop/release
+          strip_components: 1
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 60m
+          script: |
+            set -e
+            mkdir -p /opt/welove-shop/nginx
+            cp /opt/welove-shop/release/docker-compose.prod.yml /opt/welove-shop/docker-compose.prod.yml
+            cp /opt/welove-shop/release/nginx.conf.template /opt/welove-shop/nginx/default.conf.template
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${{ inputs.release_tag }}/' /opt/welove-shop/config/production.env
+            docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml pull
+            docker compose --env-file /opt/welove-shop/config/production.env --env-file /opt/welove-shop/secrets/production.secrets.env -f /opt/welove-shop/docker-compose.prod.yml up -d --remove-orphans
