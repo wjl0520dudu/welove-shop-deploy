@@ -40,6 +40,9 @@ class Config:
     # Requires a dedicated/reindexed collection that persists parent_id.  Keep
     # false until the migration script has built and validated that index.
     RAG_PARENT_CHILD_ENABLED = os.getenv("RAG_PARENT_CHILD_ENABLED", "false").lower() in ("1", "true", "yes")
+    # Defaults to the v2.3 recursive implementation.  ``fixed_v1`` is a
+    # separately indexed experiment and never changes the default behavior.
+    RAG_PARENT_CHILD_CHUNKING = os.getenv("RAG_PARENT_CHILD_CHUNKING", "recursive_v23").strip().lower()
 
     # 3.向量库和 embedding 配置
     # ── OpenAI 兼容通道（历史遗留，暂不删）──

@@ -87,7 +87,13 @@ def _build_chunks_from_text(raw_text: str, request: ParseRequest) -> List[Docume
     # corresponding Milvus schema/reindex migration.  The construction is kept
     # here so ingestion and retrieval share one canonical chunk identity.
     if config.RAG_PARENT_CHILD_ENABLED:
-        from app.infrastructure.retrieval.parent_child import build_parent_child_records
+        if config.RAG_PARENT_CHILD_CHUNKING == "fixed_v1":
+            from app.infrastructure.retrieval.fixed_parent_child import build_fixed_parent_child_records
+            build_parent_child_records = build_fixed_parent_child_records
+            index_version = "fixed_parent_child_v1"
+        else:
+            from app.infrastructure.retrieval.parent_child import build_parent_child_records
+            index_version = "parent_child_v1"
         cleaned = clean_text(raw_text)
         source = request.file_path or request.title or f"doc_{request.doc_id}.md"
         parents, children = build_parent_child_records(request.doc_id, cleaned, {
@@ -98,13 +104,13 @@ def _build_chunks_from_text(raw_text: str, request: ParseRequest) -> List[Docume
             doc_id=request.doc_id, source=source, title=request.title or os.path.basename(source),
             doc_type=request.doc_type, chunk_type="parent", category_id=request.category_id,
             chunk_index=index, total_chunks=len(parents), content_hash=hash_content(parent["content"]),
-            parent_id=parent["parent_id"], child_index=0, index_version="parent_child_v1",
+            parent_id=parent["parent_id"], child_index=0, index_version=index_version,
         )) for index, parent in enumerate(parents)]
         child_chunks = [DocumentChunk(content=child["content"], metadata=ChunkMetadata(
             doc_id=request.doc_id, source=source, title=request.title or os.path.basename(source),
             doc_type=request.doc_type, chunk_type="child", category_id=request.category_id,
             chunk_index=index, total_chunks=len(children), content_hash=hash_content(child["content"]),
-            parent_id=child["parent_id"], child_index=child["child_index"], index_version="parent_child_v1",
+            parent_id=child["parent_id"], child_index=child["child_index"], index_version=index_version,
         )) for index, child in enumerate(children)]
         return parent_chunks + child_chunks
     parts = split_text(raw_text)
