@@ -1,0 +1,54 @@
+name: Dispatch private production release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tag belongs to main
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF")"
+          git merge-base --is-ancestor "$tag_commit" origin/main || {
+            echo "Only tags reachable from main may deploy." >&2
+            exit 1
+          }
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Notify the private deployment repository
+        env:
+          DEPLOY_REPO_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          SOURCE_SHA: ${{ steps.tag.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPLOY_REPO_TOKEN" ]] || {
+            echo "Missing required repository secret: DEPLOY_REPO_TOKEN" >&2
+            exit 1
+          }
+          payload="$(jq -cn \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$SOURCE_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '{event_type:"main-release", client_payload:{tag:$tag, source_sha:$sha, source_repo:$repo}}')"
+          curl --fail-with-body --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $DEPLOY_REPO_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$payload" \
+            "https://api.github.com/repos/wjl0520dudu/welove-shop-deploy/dispatches"
