@@ -56,8 +56,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=user_svc&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: welove_app
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
     depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
     mem_limit: 512m
@@ -70,8 +71,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=product_svc&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: welove_app
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
     depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
     mem_limit: 512m
@@ -84,8 +86,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=trade_svc&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: welove_app
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
     depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}}
     mem_limit: 512m
@@ -98,8 +101,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=chat_svc&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: welove_app
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
       AI_SERVICE_URL: http://ai-service:8000/api
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
     depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, nacos: {condition: service_started}, ai-service: {condition: service_started}}
