@@ -69,6 +69,10 @@ class Config:
     # ── 商品多模态 v2 collection（实验链路，不影响线上旧 collection）──
     # product_mm_v2 用于评测图文混合召回：text_dense + BM25 + image_vector + multimodal_vector。
     MILVUS_PRODUCT_V2_COLLECTION = os.getenv("MILVUS_PRODUCT_V2_COLLECTION", "product_mm_v2")
+    # 生产三路检索：text dense + BM25 + image，不写图文融合向量。
+    MILVUS_PRODUCT_THREE_PATH_COLLECTION = os.getenv(
+        "MILVUS_PRODUCT_THREE_PATH_COLLECTION", "product_multimodal_prod_v1",
+    )
     MILVUS_IMAGE_DIM = int(os.getenv("MILVUS_IMAGE_DIM", "2560"))
     MILVUS_MULTIMODAL_DIM = int(os.getenv("MILVUS_MULTIMODAL_DIM", "2560"))
 

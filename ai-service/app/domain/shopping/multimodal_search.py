@@ -310,3 +310,43 @@ async def search_multimodal_v4(
         return []
 
     return results[:top_k]
+
+
+async def search_multimodal_v5(
+    query_text: str,
+    query_image_url: str,
+    top_k: int = 10,
+    filters: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """接口⑤：单路图文融合召回 + qwen3-vl-rerank。
+
+    与 v4 使用相同的 ``multimodal_vector`` 候选空间，唯一变量是对
+    Top(2 * top_k) 候选调用多模态重排，用于隔离并量化 VL rerank 的增益。
+    """
+    top_k = max(int(top_k or 10), 1)
+    if not query_image_url:
+        logger.warning("v5 单路多模态需要 query_image_url，未提供 → 返回空")
+        return []
+
+    fusion_vec = embed_fusion(query_text, query_image_url)
+    if not _is_nonzero_vector(fusion_vec):
+        logger.warning("v5 fusion embedding 返回零向量 → 返回空")
+        return []
+
+    store = get_product_milvus_store_v2()
+    try:
+        candidates = store.multimodal_vector_search(
+            fusion_vec,
+            filters=filters,
+            top_k=top_k * 2,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("v5 multimodal_vector_search 失败：%s", e, exc_info=True)
+        return []
+
+    return multimodal_rerank(
+        query_text=query_text,
+        query_image_url=query_image_url,
+        documents=candidates,
+        top_n=top_k,
+    )
