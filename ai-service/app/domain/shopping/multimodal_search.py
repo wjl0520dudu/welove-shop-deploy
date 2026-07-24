@@ -1,7 +1,7 @@
 """product_mm_v2 图文混合检索实验接口。
 
-本模块只提供评测入口，不接入现有 ShoppingRetriever 主链路：
-- v1：text_dense + BM25 + image_vector → RRF → qwen3-vl-rerank
+本模块提供多模态商品检索路线：
+- v1：text_dense + BM25 + image_vector → RRF → qwen3-vl-rerank；生产开关开启时读取三路生产 collection
 - v2：v1 + multimodal_vector → RRF → qwen3-vl-rerank
 - v3：v2 四路召回 → RRF → WeightedRanker
 - v4：单路 multimodal_vector（查询图文融合向量 → 匹配 multimodal_vector，无 RRF 无 rerank）
@@ -19,7 +19,9 @@ from app.infrastructure.retrieval.multimodal_embeddings import (
     multimodal_rerank,
 )
 from app.domain.shopping.category_resolver import normalize_product_category
+from app.infrastructure.config import config
 from app.infrastructure.vectorstores.product.vector_store_v2 import get_product_milvus_store_v2
+from app.infrastructure.vectorstores.product.vector_store_three_path import get_product_milvus_store_three_path
 
 logger = logging.getLogger("ai-service.shopping.multimodal_search")
 
@@ -165,9 +167,10 @@ def _recall_paths(
     top_k: int,
     filters: Optional[Dict[str, Any]],
     include_multimodal: bool,
+    store=None,
 ) -> List[List[Dict[str, Any]]]:
     """执行三路/四路召回，返回按路径分组的结果。"""
-    store = get_product_milvus_store_v2()
+    store = store or get_product_milvus_store_v2()
     recall_top_k = max(int(top_k) * 2, int(top_k), 1)
     groups: list[list[dict[str, Any]]] = []
 
@@ -212,12 +215,20 @@ async def search_multimodal_v1(
 ) -> List[Dict[str, Any]]:
     """接口①：三路融合 + qwen3-vl-rerank。"""
     top_k = max(int(top_k or 10), 1)
+    # 生产开关仅影响最终选择的三路 v1；v2-v5 仍使用实验 collection，
+    # 因为它们依赖生产 schema 刻意不保存的 multimodal_vector。
+    store = (
+        get_product_milvus_store_three_path()
+        if config.SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION
+        else get_product_milvus_store_v2()
+    )
     groups = _recall_paths(
         query_text=query_text,
         query_image_url=query_image_url,
         top_k=top_k,
         filters=filters,
         include_multimodal=False,
+        store=store,
     )
     fused = rrf_fusion(groups, k=60)
     candidates = fused[: top_k * 2]

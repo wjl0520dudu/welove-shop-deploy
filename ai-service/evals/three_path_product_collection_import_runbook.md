@@ -87,7 +87,18 @@ python scripts/run_multimodal_retrieval_v1_experiment.py `
 
 确认 smoke 的 JSON/Markdown 报告正常生成后，去掉 `--limit 5` 跑完整 50 条。云端 v1 指标应与本地 v1 报告接近；若有明显偏差，先检查云端 collection 的实体数、图片 embedding 失败日志、模型配置和图片 URL，不要直接切换生产运行时。
 
-## 6. 成本与验证边界
+## 6. 切换 AI Service 运行时
+
+云端完整回归通过后，在 AI Service 的**生产私有环境文件**设置：
+
+```dotenv
+MILVUS_PRODUCT_THREE_PATH_COLLECTION=product_multimodal_prod_v1
+SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION=true
+```
+
+保留 `MILVUS_PRODUCT_V2_COLLECTION=product_mm_v2` 不变，供历史实验 v2～v5 使用。开启后，带图 ShoppingAgent 的最终 v1 路线会改读 Zilliz 三路 collection；无图商品检索和知识库 collection 不受影响。修改环境变量后重建/重启 AI Service 即可生效。
+
+## 7. 成本与验证边界
 
 正式导入会对每个有图商品调用一次文本 embedding 与一次图片 embedding；不会生成图文融合 embedding。脚本逐批写入并记录图片 embedding 失败数量；单张图片失败时写入零图片向量，但文本/BM25 路仍保留。
 

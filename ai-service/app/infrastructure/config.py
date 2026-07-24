@@ -73,6 +73,9 @@ class Config:
     MILVUS_PRODUCT_THREE_PATH_COLLECTION = os.getenv(
         "MILVUS_PRODUCT_THREE_PATH_COLLECTION", "product_multimodal_prod_v1",
     )
+    SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION = os.getenv(
+        "SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION", "false",
+    ).lower() in ("1", "true", "yes")
     MILVUS_IMAGE_DIM = int(os.getenv("MILVUS_IMAGE_DIM", "2560"))
     MILVUS_MULTIMODAL_DIM = int(os.getenv("MILVUS_MULTIMODAL_DIM", "2560"))
 
