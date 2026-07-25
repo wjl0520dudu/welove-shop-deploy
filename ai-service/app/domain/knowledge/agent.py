@@ -24,6 +24,11 @@ from app.application.assistant.reference_tools import resolve_reference
 
 logger = logging.getLogger("ai-service.knowledge.agent")
 
+# Retriever and web fallback both prefix every real context with one of these
+# headers. Split on the generated boundary instead of blank lines, because a
+# single product chunk can contain multiple blank-line-separated sections.
+_EVALUATION_CONTEXT_HEADER_RE = re.compile(r"(?m)^\[(?:资料|网络资料)\d+\]\s*来源：")
+
 
 @tool
 async def search_knowledge(query: str, search_mode: str = "hybrid", use_rerank: bool = True) -> dict:
@@ -745,11 +750,27 @@ class KnowledgeAgent:
     def _split_evaluation_contexts(knowledge_context: str) -> list[str]:
         """Keep bounded retrieval chunks for offline quality evaluation only.
 
-        The retriever currently formats chunks with blank lines. A bounded split
-        keeps per-case RAGAS input stable without leaking the complete context
-        into public API responses.
+        The retriever formats each real chunk with a stable ``[资料N] 来源：``
+        header. Split on that generated boundary rather than on blank lines;
+        blank lines are also valid inside one product/FAQ/review chunk.
         """
-        return [part.strip()[:4000] for part in (knowledge_context or "").split("\n\n") if part.strip()][:10]
+        text = (knowledge_context or "").strip()
+        if not text:
+            return []
+
+        headers = list(_EVALUATION_CONTEXT_HEADER_RE.finditer(text))
+        if not headers:
+            # Keep non-Milvus/fallback text as one context instead of inventing
+            # boundaries from its prose formatting.
+            return [text[:4000]]
+
+        contexts: list[str] = []
+        for index, header in enumerate(headers):
+            end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+            part = text[header.start():end].strip()
+            if part:
+                contexts.append(part[:4000])
+        return contexts[:10]
 
     async def _persist_entities(
         self,
