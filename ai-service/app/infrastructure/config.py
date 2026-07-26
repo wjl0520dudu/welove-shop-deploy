@@ -43,6 +43,12 @@ class Config:
     # Defaults to the v2.3 recursive implementation.  ``fixed_v1`` is a
     # separately indexed experiment and never changes the default behavior.
     RAG_PARENT_CHILD_CHUNKING = os.getenv("RAG_PARENT_CHILD_CHUNKING", "recursive_v23").strip().lower()
+    # Mixed indexes keep product semantic units as direct retrieval records
+    # while only general knowledge uses parent-child storage/reconstruction.
+    # This must stay false for the historical all-parent-child collections.
+    RAG_PARENT_CHILD_GENERAL_ONLY = os.getenv(
+        "RAG_PARENT_CHILD_GENERAL_ONLY", "false"
+    ).lower() in ("1", "true", "yes")
 
     # 3.向量库和 embedding 配置
     # ── OpenAI 兼容通道（历史遗留，暂不删）──

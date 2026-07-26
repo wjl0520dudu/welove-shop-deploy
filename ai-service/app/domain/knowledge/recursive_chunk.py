@@ -5,8 +5,8 @@ RecursiveCharacterTextSplitter, which respects hierarchical separators
 (paragraphs → sentences → words) rather than blindly cutting at a fixed
 character count.
 
-Used ONLY for the knowledge_recursive_v1 Milvus collection experiment.
-Must not be imported by production code paths.
+Used only by isolated recursive knowledge experiments. It must not be imported
+by production request paths.
 """
 
 from __future__ import annotations
