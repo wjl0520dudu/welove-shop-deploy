@@ -55,13 +55,19 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # A merge conflict intentionally fails the workflow before any build or deployment.
-          git merge --no-ff --no-commit "$SOURCE_COMMIT"
-          # Public-repository workflows are not part of the private deployment
-          # repository. Keeping the private workflow tree also avoids requiring
-          # elevated workflow-write permission for the default GITHUB_TOKEN.
-          git restore --source=HEAD --staged --worktree -- .github/workflows
-          git commit --no-edit
+          if git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD; then
+            # A prior failed release may already have synchronized this exact
+            # source commit. A new tag must still be able to retry deployment.
+            echo "Source commit already synchronized; creating a retry tag."
+          else
+            # A merge conflict intentionally fails the workflow before any build or deployment.
+            git merge --no-ff --no-commit "$SOURCE_COMMIT"
+            # Public-repository workflows are not part of the private deployment
+            # repository. Keeping the private workflow tree also avoids requiring
+            # elevated workflow-write permission for the default GITHUB_TOKEN.
+            git restore --source=HEAD --staged --worktree -- .github/workflows
+            git commit --no-edit
+          fi
           git tag -a "$RELEASE_TAG" -m "Release ${RELEASE_TAG} from ${SOURCE_REPOSITORY}@${SOURCE_COMMIT}"
           git push origin HEAD:main "refs/tags/$RELEASE_TAG"
 
@@ -75,6 +81,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       changed_names: ${{ steps.plan.outputs.changed_names }}
+      candidate_tags: ${{ steps.plan.outputs.candidate_tags }}
       previous_tag: ${{ steps.plan.outputs.previous_tag }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
     steps:
@@ -136,8 +143,10 @@ jobs:
           fi
 
           changed_names="$(IFS=,; echo "${selected[*]}")"
+          candidate_tags="$(git tag --list 'v*' --sort=-version:refname | tr '\n' ' ')"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "changed_names=$changed_names" >> "$GITHUB_OUTPUT"
+          echo "candidate_tags=$candidate_tags" >> "$GITHUB_OUTPUT"
           echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
@@ -207,6 +216,7 @@ jobs:
         env:
           PREVIOUS_TAG: ${{ needs.prepare-build.outputs.previous_tag }}
           CHANGED_NAMES: ${{ needs.prepare-build.outputs.changed_names }}
+          CANDIDATE_TAGS: ${{ needs.prepare-build.outputs.candidate_tags }}
           RELEASE_TAG: ${{ needs.prepare-build.outputs.release_tag }}
           GHCR_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
           ACR_IMAGE_REPOSITORY: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ matrix.name }}
@@ -219,7 +229,19 @@ jobs:
           set -euo pipefail
           [[ -n "$PREVIOUS_TAG" ]] || exit 0
           [[ ",$CHANGED_NAMES," == *",${{ matrix.name }},"* ]] && exit 0
-          docker buildx imagetools create --tag "$GHCR_IMAGE_REPOSITORY:$RELEASE_TAG" "$GHCR_IMAGE_REPOSITORY:$PREVIOUS_TAG"
+          source_tag=""
+          for candidate in $CANDIDATE_TAGS; do
+            [[ "$candidate" == "$RELEASE_TAG" ]] && continue
+            if docker buildx imagetools inspect "$GHCR_IMAGE_REPOSITORY:$candidate" >/dev/null 2>&1; then
+              source_tag="$candidate"
+              break
+            fi
+          done
+          [[ -n "$source_tag" ]] || {
+            echo "No published GHCR image found for $GHCR_IMAGE_REPOSITORY" >&2
+            exit 1
+          }
+          docker buildx imagetools create --tag "$GHCR_IMAGE_REPOSITORY:$RELEASE_TAG" "$GHCR_IMAGE_REPOSITORY:$source_tag"
           # Copy all manifests and layers across registries. This also handles
           # the first release after ACR migration without rebuilding.
           skopeo copy --all \
