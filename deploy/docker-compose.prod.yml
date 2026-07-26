@@ -50,7 +50,7 @@ services:
 
   user-service:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-user-service:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-user-service:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=user_svc&stringtype=unspecified
@@ -65,7 +65,7 @@ services:
 
   product-service:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-product-service:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-product-service:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=product_svc&stringtype=unspecified
@@ -80,7 +80,7 @@ services:
 
   trade-service:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-trade-service:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-trade-service:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=trade_svc&stringtype=unspecified
@@ -95,7 +95,7 @@ services:
 
   chat-service:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-chat-service:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-chat-service:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=chat_svc&stringtype=unspecified
@@ -111,7 +111,7 @@ services:
 
   admin-bff:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-admin-bff:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-admin-bff:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/welove_shop_search?currentSchema=admin_svc&stringtype=unspecified
@@ -123,7 +123,7 @@ services:
 
   gateway:
     <<: *java
-    image: ghcr.io/${GHCR_OWNER}/welove-gateway:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-gateway:${IMAGE_TAG}
     environment:
       NACOS_SERVER_ADDR: nacos:8848
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC
@@ -131,7 +131,7 @@ services:
     mem_limit: 512m
 
   ai-service:
-    image: ghcr.io/${GHCR_OWNER}/welove-ai-service:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-ai-service:${IMAGE_TAG}
     restart: unless-stopped
     env_file:
       - /opt/welove-shop/config/production.env
@@ -150,14 +150,14 @@ services:
     networks: [internal]
 
   shop-web:
-    image: ghcr.io/${GHCR_OWNER}/welove-shop-web:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-shop-web:${IMAGE_TAG}
     restart: unless-stopped
     env_file:
       - /opt/welove-shop/config/production.env
     networks: [internal]
 
   admin-web:
-    image: ghcr.io/${GHCR_OWNER}/welove-admin-web:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/welove-admin-web:${IMAGE_TAG}
     restart: unless-stopped
     env_file:
       - /opt/welove-shop/config/production.env
