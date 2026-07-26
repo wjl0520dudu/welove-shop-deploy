@@ -9,6 +9,10 @@ The collection contains two intentionally different record types:
 
 The script requires the isolated runtime configuration documented in its
 ``main`` validation. It never writes to product retrieval collections.
+
+For Zilliz Cloud, configure ``MILVUS_URL`` and ``MILVUS_TOKEN`` in ``.env``
+and add ``--remote``. The flag rejects local HTTP endpoints and validates the
+parent-child schema before writes.
 """
 from __future__ import annotations
 
@@ -48,6 +52,7 @@ TARGET_COLLECTION = "knowledge_mixed_fixed_parent_child_v1"
 INDEX_VERSION = "mixed_fixed_parent_child_v1"
 GENERAL_DOC_ID_BASE = 900000
 CATEGORY_CHOICES = ("beauty", "digital", "fashion", "food")
+MISLEADING_RECURSIVE_COLLECTION = "knowledge_semantic_recursive_general_v1"
 
 
 def build_product_semantic_chunks(
@@ -132,7 +137,35 @@ def build_general_parent_child_chunks(
     return parent_chunks + child_chunks
 
 
-def _make_store(collection_name: str, dry_run: bool):
+def _validate_remote_target(require_remote: bool) -> None:
+    """Require an explicit Zilliz Cloud configuration for remote writes."""
+    if not require_remote:
+        return
+    if not config.MILVUS_URL.lower().startswith("https://"):
+        raise RuntimeError(
+            "--remote requires MILVUS_URL to be the Zilliz HTTPS endpoint"
+        )
+    if not config.MILVUS_TOKEN.strip():
+        raise RuntimeError("--remote requires a non-empty MILVUS_TOKEN")
+
+
+def _assert_parent_child_schema(collection_name: str) -> None:
+    """Fail before writes when an existing collection is a single-layer schema."""
+    from pymilvus import Collection
+
+    field_names = {field.name for field in Collection(collection_name).schema.fields}
+    required = {"parent_id", "child_index"}
+    missing = sorted(required - field_names)
+    if missing:
+        raise RuntimeError(
+            f"collection {collection_name!r} is missing parent-child fields: "
+            f"{', '.join(missing)}. It is likely a single-layer collection. "
+            "Choose a new collection name, or explicitly drop and recreate the "
+            "remote collection before importing this fixed parent-child strategy."
+        )
+
+
+def _make_store(collection_name: str, dry_run: bool, require_remote: bool):
     if not config.RAG_PARENT_CHILD_ENABLED:
         raise RuntimeError("set RAG_PARENT_CHILD_ENABLED=true for this experiment")
     if not config.RAG_PARENT_CHILD_GENERAL_ONLY:
@@ -145,12 +178,15 @@ def _make_store(collection_name: str, dry_run: bool):
         )
     if collection_name == config.MILVUS_PRODUCT_COLLECTION:
         raise RuntimeError(f"{collection_name} is a product retrieval collection, not a knowledge collection")
+    _validate_remote_target(require_remote)
     if dry_run:
         return None
 
     from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
 
-    return MilvusVectorStore(collection_name=collection_name)
+    store = MilvusVectorStore(collection_name=collection_name)
+    _assert_parent_child_schema(collection_name)
+    return store
 
 
 def _write_document(store, chunks: list[DocumentChunk], replace: bool) -> int:
@@ -262,14 +298,26 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="limit per product category or general document")
     parser.add_argument("--dry-run", action="store_true", help="build and report chunks without Milvus writes")
     parser.add_argument("--replace", action="store_true", help="delete each selected doc_id before inserting")
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="require a Zilliz HTTPS endpoint and MILVUS_TOKEN before writing",
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be greater than zero")
 
     try:
-        store = _make_store(args.collection, args.dry_run)
+        store = _make_store(args.collection, args.dry_run, args.remote)
     except RuntimeError as exc:
         parser.error(str(exc))
+
+    if args.collection == MISLEADING_RECURSIVE_COLLECTION:
+        logger.warning(
+            "collection name %s historically referred to recursive single-layer "
+            "chunks; this import writes the mixed fixed parent-child strategy",
+            args.collection,
+        )
 
     print("=" * 78)
     print("Mixed fixed parent-child ingestion (product semantic + general parent-child)")
@@ -278,6 +326,7 @@ def main() -> None:
     print(f"  Category / limit : {args.category or 'all'} / {args.limit or 'unlimited'}")
     print(f"  General parent   : {PARENT_CHUNK_SIZE} / overlap {PARENT_CHUNK_OVERLAP}")
     print(f"  General child    : {CHILD_CHUNK_SIZE} / overlap {CHILD_CHUNK_OVERLAP}")
+    print(f"  Target           : {'Zilliz Cloud' if args.remote else 'configured Milvus'}")
     print(f"  Replace / dryrun : {args.replace} / {args.dry_run}")
     print("=" * 78)
 

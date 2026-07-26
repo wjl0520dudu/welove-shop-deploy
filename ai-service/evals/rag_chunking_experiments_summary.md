@@ -1,139 +1,152 @@
-# 商品知识库 RAG 分块实验对比
+# 商品与通用知识 RAG 分块实验档案
 
-更新日期：2026-07-25
+更新时间：2026-07-26
 
-## 1. 目的与范围
+本文记录商品知识库和通用知识库所有已执行的 RAG 分块实验。它用于回顾设计、定位对应脚本和报告，并明确哪些结果可以比较，哪些只能作为历史参考。
 
-本文记录商品知识库的 RAG 分块与检索方案实验。目标是确定默认方案，并明确每组结果能够支持的结论边界。
+## 1. 术语与数据边界
 
-本文只比较 `knowledge` 场景；商品检索、路由、DeepEval smoke、合同测试和多模态检索报告不属于分块策略实验，不在本表作为方案候选。
+知识库由两类数据组成：
 
-当前 `.env` 的默认知识库配置为：
+| 数据类型 | 内容 | 当前推荐的组织原则 |
+|---|---|---|
+| 商品知识 | 每个商品的营销描述、官方 FAQ、用户评价 | 保留业务语义边界：营销描述一个块、每条 FAQ 一个块、每 3 条评价一个块 |
+| 通用知识 | 8 篇静态商品/护肤/数码/服饰/食品知识文档，`doc_id=900001..900008` | 可按固定长度、递归边界或 Markdown 主题进行切分 |
 
-```env
-MILVUS_COLLECTION=my_rag_collection
-RAG_PARENT_CHILD_ENABLED=false
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-```
+这里的“商品语义块”是确定性规则，不是由大模型自动识别：
 
-## 2. 统一评测条件
+1. 一条营销描述组成一个 `marketing` 块。
+2. 一组问答组成一个 `faq` 块。
+3. 每 3 条评价组成一个 `review` 块。
 
-除特别标记的历史参考项外，正式评测使用：
+`500/50`、`1000/100` 等参数均为字符级 `chunk_size/chunk_overlap`，不是 token 数。检索默认采用 hybrid（dense + BM25）-> rerank，初始 Top20，最终 Top5。
+
+## 2. 评测口径
+
+当前知识问答评测集为 `evals/datasets/agent_golden_cases.jsonl`：
 
 | 项目 | 固定值 |
 |---|---|
-| 数据集 | `evals/datasets/agent_golden_cases.jsonl` |
+| 场景 | 32 条 `knowledge` case |
 | 数据集指纹 | `d7c852af8570e81f` |
-| 评测范围 | 32 条 `knowledge` case |
 | Embedding | `text-embedding-v4` |
 | Rerank | `qwen3-rerank` |
-| 初始召回 | Top20 |
-| 最终上下文 | Top5 |
 | 回答模型 / RAGAS LLM | `qwen-plus` |
-| 检索流程 | hybrid（dense + BM25）-> rerank |
+| 检索标注 | 16 条 case 有 relevance 标注，用于 Recall@5、MRR@5、NDCG@5 |
 
-RAGAS 个别样本会因模型输出长度等原因评分失败。因此：
+RAGAS 会受模型输出、网络和 `max_tokens` 影响，四项指标的有效样本数可能不同。因此：
 
-1. Contract、延迟以完整 32 条输入 case 统计；
-2. RAGAS 原始均值必须同时写明样本数；
-3. 两个方案的正式 RAGAS 结论以每个指标均成功的 case 交集的配对均值为准；
-4. `Recall@5`、`MRR@5`、`NDCG@5` 仅在 16 条有 relevance 标注的 case 上计算。
+- 原始均值必须同时看样本数 `n`。
+- 比较两个报告时，以两边都成功产出该指标的相同 case ID 的配对均值为准。
+- Contract、延迟、路由超时属于端到端运行现象，不能单独归因于分块策略。
 
-## 3. 当前可形成正式对比的主实验
+## 3. 策略全景
 
-### 3.1 对比对象
+### 3.1 当前“混合数据组织”实验
 
-| 方案 | Collection | 商品知识组织 | 通用知识组织 | 运行条件 |
-|---|---|---|---|---|
-| v2.1 当前复测 | `my_rag_collection` | 营销描述、单条 FAQ、每 3 条评价按语义组装为块 | 固定分块 `500/50` | Commit `d7e245b`；Prompt `110008402b23beba` |
-| recursive_v1 + general | `knowledge_recursive_v1` | 商品语义组装后采用递归 `500/50` | 递归分块 `500/50` | Commit `d7e245b`；Prompt `110008402b23beba` |
+这些实验都保留商品知识的语义单元；变化只在通用知识的切分方式或检索回填方式。
 
-两次均使用相同数据集、模型、检索参数、32 条 case、当前提交和提示词，因此可以作为当前的**整体 RAG 方案对比**。
-
-但它不是纯粹的“固定切分器 vs 递归切分器”因果实验：两边的商品/通用知识文档构建和 collection 内容也不同。结论应表述为“这两套完整知识库方案的对比”，不能把全部差异归因于 splitter。
-
-### 3.2 当前报告的原始汇总
-
-| 指标 | v2.1 当前复测 | recursive_v1 + general |
-|---|---:|---:|
-| Answer Relevancy | 0.7693 (n=26) | 0.7747 (n=28) |
-| Context Precision | 0.4405 (n=20) | 0.4428 (n=22) |
-| Context Recall | 0.6008 (n=20) | 0.5652 (n=22) |
-| Faithfulness | 0.6853 (n=26) | 0.6531 (n=28) |
-| Recall@5 | 0.8646 | 0.7708 |
-| MRR@5 | 0.9062 | 0.8750 |
-| NDCG@5 | 0.8571 | 0.7742 |
-| Contract Pass Rate | 75.00% | 93.75% |
-| P50 / P95 延迟 | 13.30s / 29.50s | 12.25s / 17.29s |
-
-### 3.3 配对 RAGAS 对比
-
-下表按两个报告中均成功产生对应 RAGAS 指标的相同 case 计算，消除各自有效样本数不同造成的偏差。Delta 为“递归方案 - v2.1”。
-
-| 指标 | 配对 case 数 | v2.1 当前复测 | recursive_v1 + general | Delta | 结果 |
-|---|---:|---:|---:|---:|---|
-| Answer Relevancy | 26 | 0.7693 | 0.7601 | -0.0092 | v2.1 略好 |
-| Context Precision | 20 | 0.4405 | 0.4789 | +0.0385 | 递归版更干净 |
-| Context Recall | 20 | 0.6008 | 0.5842 | -0.0167 | v2.1 更完整 |
-| Faithfulness | 26 | 0.6853 | 0.6615 | -0.0238 | v2.1 更可靠 |
-
-### 3.4 当前结论
-
-`my_rag_collection` 的 v2.1 策略仍应保留为默认线上方案：检索三项指标和配对后的回答相关性、上下文召回、忠实度均更好。递归版只在 Context Precision 上有明确优势，说明其上下文更精简，但带来了召回和回答依据的损失。
-
-当前 v2.1 的 Contract 与 P95 延迟较差，包含路由、超时及 `rag-029` RAGAS `max_tokens` 错误等运行因素；这些指标不能直接归因于分块策略。
-
-主报告：
-
-- `evals/reports/agent-v2.1-rerun-20260725.json`
-- `evals/reports/agent-recursive-v1-with-general.json`
-
-## 4. 已完成的历史实验（参考）
-
-下表保留以前做过的分块实验，方便追溯。标记为“参考”的报告不得与第 3 节直接相减得出因果结论。
-
-| 实验 | 日期 / Collection | 数据与版本 | 原始 RAGAS：AR / CP / CR / F | 检索：R@5 / MRR / NDCG | 证据等级与说明 |
+| 策略 | Collection | 商品知识 | 通用知识 | 检索形式 | 灌入脚本 |
 |---|---|---|---|---|---|
-| v2.1 历史基线 | 07-17；`my_rag_collection` | 32 knowledge；Commit `8800851`；Prompt `f49c...` | 0.8107 / 0.4040 / 0.5561 / 0.6672 | 0.8646 / 0.8958 / 0.8489 | 参考。文档策略与当前 v2.1 相同，但代码和 prompt 均不同。 |
-| recursive_v1 商品 only | 07-22；`knowledge_recursive_v1` | 32 knowledge；Commit `39b486f`；Prompt `110008...`；未导入通用知识 | 0.7921 / 0.3947 / 0.4717 / 0.6325 | 0.7292 / 0.8750 / 0.7603 | 消融参考。说明通用知识缺失会显著伤害覆盖，但与 +general 版本提交不同。 |
-| v2.3 递归父子 | 07-18；`knowledge_parent_child_v1` | 142 条全场景；Commit `5e5cb04`；Prompt `f49c...` | 0.7411 / 0.3304 / 0.6522 / 0.5804 | 0.4628 / 0.4505 / 0.4304（74 条标注） | 参考。父递归 `1200/160`，子递归 `320/48`；场景和统计口径均不同，不能与 32 条 knowledge-only 横比。 |
-| fixed-parent-child-v1 | 07-23；`knowledge_fixed_parent_child_v1` | 32 knowledge；Commit `cbd3e97`；Prompt `110008...` | 0.7701 / 0.3671 / 0.5682 / 0.6197 | 0.8646 / 0.9062 / 0.8623 | 方案探索参考。父固定 `800/100`，子固定 `400/60`，同时改变父子检索、回填和文档组装；提交也不同。 |
+| v2.1 固定单层 | `my_rag_collection` | 语义块直存 | 固定 `500/50` | 单层 Top5 | `ingest_knowledge_v2.py` |
+| recursive_v1 + general | `knowledge_recursive_v1` | 语义组装后递归 `500/50` | 递归 `500/50` | 单层 Top5 | `ingest_recursive_v1.py` |
+| semantic_v1 | `knowledge_semantic_v1` | 语义块直存 | Markdown `##` 主题块；过大主题再按 `###` 分割 | 单层 Top5 | `ingest_semantic_v1.py` |
+| mixed fixed parent-child | `knowledge_mixed_fixed_parent_child_v1` | 语义块直存，不走父子回填 | 父固定 `1000/100`，子固定 `500/50` | 商品块直出；通用子块召回/rerank 后回填父窗口 | `ingest_mixed_fixed_parent_child_v1.py` |
+| semantic + recursive general | `knowledge_semantic_recursive_general_v1` | 语义块直存 | 递归 `500/50` | 单层 Top5 | `ingest_semantic_recursive_general_v1.py` |
 
-缩写：AR = Answer Relevancy，CP = Context Precision，CR = Context Recall，F = Faithfulness，R@5 = Recall@5。
+### 3.2 旧“全部内容合并后再分块”实验
 
-历史报告：
+下列旧父子实验把一个商品的营销描述、所有 FAQ、所有评价先合成较长文档，再统一进行父子切分；通用知识也使用同一父子路径。它们会破坏商品 FAQ/评价的原始语义边界。
 
-- `evals/reports/agent-v2.1-ragas.local.json`
-- `evals/reports/agent-recursive-v1-product-only.json`（与 `agent-recursive-v1.json` 为同次商品 only 结果）
-- `evals/reports/agent-v2.3-full.json`
-- `evals/reports/agent-fixed-parent-child-v1.json`
+这类实验回答的是“整篇商品文档的父子切块是否有效”，不是“仅替换通用知识切分器是否有效”。不能和第 3.1 节的混合策略当作同一变量的对照。
 
-## 5. 各方案的知识组织与分块边界
+| 策略 | Collection | 商品与通用知识组织 | 父块 / 子块 | 结论定位 |
+|---|---|---|---|---|
+| v2.3 recursive parent-child | `knowledge_parent_child_v1` | 商品内容先合并；通用知识也进入父子递归 | 递归 `1200/160` / `320/48` | 历史探索，数据范围和评测口径不同 |
+| fixed_parent_child_v1 | `knowledge_fixed_parent_child_v1` | 商品内容先合并；通用知识也进入父子固定 | 固定 `800/100` / `400/60` | 历史探索，商品语义被稀释 |
 
-| 方案 | 商品知识 | 通用知识 | 检索结构 |
-|---|---|---|---|
-| v2.1 | 营销描述、单条 FAQ、每 3 条评价构成语义知识块；短块不应再被无意义拆开 | 固定 `500/50` | 单层 Top5 chunk |
-| recursive_v1 | 商品语义组装后递归 `500/50` | 递归 `500/50` | 单层 Top5 chunk |
-| v2.3 | 商品相关内容先合为较大文档，再生成父/子递归块 | 同样进入父/子递归块 | 子块召回、rerank，父块回填 |
-| fixed-parent-child-v1 | 商品相关内容先合为文档，再生成父/子固定块 | 同样进入父/子固定块 | 子块召回、rerank，父块回填 |
+## 4. 当前 32 条知识问答结果
 
-父子方案的弱点不是“父子结构一定无效”，而是商品语义单元在合并和父块回填后可能被稀释；大父块还会把未命中的内容带入回答上下文。这也是它们不能视为只更换切分器的原因。
+下表来自当前可用报告。RAGAS 各列的括号为该指标有效样本数，检索指标固定在 16 条有标注 case 上计算。
 
-## 6. 已知评测限制
+| 策略 | AR | CP | CR | Faithfulness | Recall@5 | MRR@5 | NDCG@5 | Contract | 报告 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| v2.1 固定单层 | 0.7741 (25) | 0.7358 (20) | 0.6842 (20) | 0.7187 (25) | 0.8646 | 0.8646 | 0.8381 | 93.75% | `agent-v2.1-resumed-20260725.json` |
+| semantic_v1 | 0.7822 (26) | 0.7365 (20) | 0.6800 (20) | 0.7111 (26) | 0.8021 | 0.8125 | 0.7838 | 87.50% | `agent-semantic-v1.json` |
+| mixed fixed parent-child | 0.7843 (26) | 0.8540 (21) | 0.7341 (21) | 0.7036 (26) | 0.8646 | 0.8750 | 0.8463 | 90.62% | `agent-mixed-fixed-parent-child-v1.json` |
+| semantic + recursive general | 0.7363 (27) | 0.7633 (20) | 0.6300 (20) | 0.6967 (27) | 0.8646 | 0.8750 | 0.8463 | 90.62% | `agent-semantic-recursive-general-v1.json` |
 
-1. 旧报告中的评测层会将一个真实检索 chunk 按空行拆成多个 `retrieved_contexts`。该问题已在当前代码修复：现在按生成的 `[资料N] 来源：` / `[网络资料N] 来源：` 块头切分；旧报告的 Context Precision、Context Recall 和 Faithfulness 仍应视为历史参考。
-2. RAGAS 本身依赖模型调用，存在 `max_tokens` 等偶发评分失败。修复后应重新运行正式对照组，并按相同成功 case 计算配对均值。
-3. Contract、路由和端到端延迟会受到模型、网络和运行环境影响。除非以固定运行环境多次重复，否则不把这些波动解释为 chunking 的效果。
-4. 不同 commit、prompt 指纹、case 范围或 collection 数据内容的报告只能作为设计参考，不能充当严格对照组。
+### 4.1 相对 v2.1 的配对 RAGAS 差异
 
-## 7. 后续实验建议
+Delta 为“候选策略 - v2.1”，仅在两个报告对该指标均成功评分的同一 case ID 上计算。正数表示候选更高。
 
-下一组值得做的正式实验是独立的混合方案：`knowledge_hybrid_v1`。
+| 策略 | AR Delta | CP Delta | CR Delta | Faithfulness Delta | 解读 |
+|---|---:|---:|---:|---:|---|
+| semantic_v1 | +0.0178 (n=24) | +0.0534 (n=19) | +0.0132 (n=19) | -0.0089 (n=24) | 数值改善幅度小，但检索三项下降；没有形成可靠优势 |
+| mixed fixed parent-child | +0.0068 (n=25) | +0.1108 (n=20) | +0.0367 (n=20) | -0.0050 (n=25) | 当前最有希望的候选：上下文相关性和覆盖均改善，忠实度基本持平 |
+| semantic + recursive general | -0.0218 (n=25) | +0.0275 (n=20) | -0.0542 (n=20) | -0.0160 (n=25) | 片段更聚焦但覆盖和答案质量下降，应淘汰 |
 
-- 商品知识沿用 v2.1 的语义组装，不把营销描述、FAQ、评价强行合并后再大块切分；
-- 通用知识按主题建立父子块；
-- 固定当前 commit、prompt、32 条 case、embedding、rerank 和评测实现；
-- 与 v2.1 当前复测、recursive_v1 + general 在相同 case 交集上做配对 RAGAS 比较。
+### 4.2 当前结论
 
-在完成评测 context 拆分修复前，不建议继续做大量 chunk 尺寸网格搜索。当前证据显示，商品知识的语义边界和父子回填策略比单纯微调 `500/50` 的数值更值得优先优化。
+1. `my_rag_collection` 的 v2.1 是可用、稳定的固定单层基线。
+2. `knowledge_mixed_fixed_parent_child_v1` 是当前最强候选：商品语义块不被合并，父子结构只用于通用知识。它比 v2.1 的 CP 和 CR 更高，且检索指标不低。
+3. `knowledge_semantic_v1` 不能证明主题单层优于 v2.1：虽然部分配对 RAGAS 略高，但 3 个检索指标均下降。
+4. `knowledge_semantic_recursive_general_v1` 不适合作为最终方案：递归单层仅带来 CP 小幅提升，AR、CR、Faithfulness 均下降。32 条中有 23 条 Top5 完全不变，说明当前短通用文档的递归边界改动有限。
+
+以上结果仍属于候选筛选，不是最终统计结论。v2.1 报告的提交为 `d7e245b`，后三个报告为 `e0ac6ed`；虽使用相同数据集、模型和检索参数，最终定版前应在同一提交、同一运行环境下重跑 v2.1 与 mixed fixed parent-child，并进行配对比较。
+
+## 5. 历史实验与参考结果
+
+这些报告保留设计演进信息，但存在不同提交、不同 Prompt、不同 case 范围或旧评测上下文拆分问题，不能直接同第 4 节做数值相减。
+
+| 实验 | 日期 / Collection | 关键策略 | AR / CP / CR / F | R@5 / MRR / NDCG | 可比性与收获 |
+|---|---|---|---|---|---|
+| v2.1 历史基线 | 07-17, `my_rag_collection` | 商品语义块 + 通用固定 `500/50` | 0.8107 / 0.4040 / 0.5561 / 0.6672 | 0.8646 / 0.8958 / 0.8489 | Prompt 为 `f49c...`，仅作历史参考 |
+| recursive_v1 商品 only | 07-22, `knowledge_recursive_v1` | 商品语义内容递归 `500/50`，未导入通用知识 | 0.7921 / 0.3947 / 0.4717 / 0.6325 | 0.7292 / 0.8750 / 0.7603 | 证明缺少通用知识会显著损害覆盖，不能作为最终方案 |
+| v2.3 递归父子 | 07-18, `knowledge_parent_child_v1` | 商品与通用知识均先合并后递归父子 | 0.7411 / 0.3304 / 0.6522 / 0.5804 | 0.4628 / 0.4505 / 0.4304 | 142 条全场景、仅 14 条检索标注；不能横比 32 条知识问答 |
+| fixed_parent_child_v1 | 07-23, `knowledge_fixed_parent_child_v1` | 商品与通用知识均先合并后固定父子 `800/100`、`400/60` | 0.7701 / 0.3671 / 0.5682 / 0.6197 | 0.8646 / 0.9062 / 0.8623 | 商品语义边界被合并，且旧评测上下文存在拆分问题；仅作反例和设计参考 |
+| recursive_v1 + general | 07-25, `knowledge_recursive_v1` | 商品语义内容递归 `500/50` + 通用递归 `500/50` | 0.7747 / 0.4428 / 0.5652 / 0.6531 | 0.7708 / 0.8750 / 0.7742 | 使用旧上下文解析结果，不能与第 4 节直接比较；递归版 CP 更高但 CR/F 更低的方向可作参考 |
+
+对应报告：
+
+- `agent-v2.1-ragas.local.json`
+- `agent-recursive-v1-product-only.json`
+- `agent-v2.3-full.json`
+- `agent-fixed-parent-child-v1.json`
+- `agent-recursive-v1-with-general.json`
+
+`agent-v2.1-rerun-20260725.json` 是一次失败/中断的重跑，RAGAS 有效样本为 0，已由 `agent-v2.1-resumed-20260725.json` 替代，不参与任何结论。
+
+## 6. 为什么旧父子策略表现不可靠
+
+旧父子实验的问题不在于“父子分块一定无效”，而在数据组织：
+
+1. 商品营销描述、所有 FAQ 和所有评价先被拼接，原本独立的问答和评价语义被打散。
+2. 子块命中后回填较大的父块，会带入未命中的 FAQ、评价或营销语句，增加噪声。
+3. 商品文档和通用文档被同一套父子策略处理，忽略了两类数据的天然结构差异。
+
+混合 fixed parent-child 的设计正是针对这一点：商品语义块直接参与检索与回答；仅通用知识使用“子块检索/rerank -> 父窗口回填”。因此它是与旧父子实验不同的新方案。
+
+## 7. 后续实验决策
+
+| 候选 | 当前决策 | 原因 |
+|---|---|---|
+| 通用递归父子 | 先干跑比较父/子边界，再决定是否跑 RAGAS | 当前 8 篇通用文档较短，父 `1000/100` 往往接近整篇文档；若边界近似固定父子，完整 RAGAS 没有信息增益 |
+| 通用主题父子 | 暂不跑 | 当前主题单层没有可靠优势，且文档标题层级少，父子内容容易重复 |
+| mixed fixed parent-child | 保留为最终候选，后续做同提交复测 | 当前 RAGAS 和检索证据最强 |
+| v2.1 固定单层 | 保留为对照基线和回退方案 | 结构简单、检索稳定，且商品语义边界得到保留 |
+
+最终定版实验只需重跑两组：v2.1 固定单层与 mixed fixed parent-child。两组应固定同一 Git commit、相同 `.env` 的模型参数、相同 32 条数据集，并以配对 RAGAS 和 16 条检索指标共同决策。
+
+## 8. 运行与恢复索引
+
+| 目的 | 入口 |
+|---|---|
+| v2.1 商品语义 + 通用固定单层 | `scripts/ingest_knowledge_v2.py` |
+| 商品语义 + 通用主题单层 | `scripts/ingest_semantic_v1.py` 与 `evals/semantic_v1_runbook.md` |
+| 商品语义 + 通用固定父子 | `scripts/ingest_mixed_fixed_parent_child_v1.py` |
+| 商品语义 + 通用递归单层 | `scripts/ingest_semantic_recursive_general_v1.py` |
+| 历史递归单层 | `scripts/ingest_recursive_v1.py` |
+| 历史全量固定父子 | `scripts/ingest_fixed_parent_child_v1.py` |
+
+每次实验前，必须在 `ai-service/.env` 显式设置 `MILVUS_COLLECTION`、`RAG_PARENT_CHILD_ENABLED`、`RAG_PARENT_CHILD_CHUNKING`、`RAG_PARENT_CHILD_GENERAL_ONLY`、`CHUNK_SIZE` 和 `CHUNK_OVERLAP`，并将结果写入新的报告文件，避免覆盖历史证据。
