@@ -519,6 +519,9 @@ def _build_metadata() -> dict[str, Any]:
             "chunk_size": config.CHUNK_SIZE,
             "chunk_overlap": config.CHUNK_OVERLAP,
             "milvus_collection": config.MILVUS_COLLECTION,
+            "parent_child_enabled": config.RAG_PARENT_CHILD_ENABLED,
+            "parent_child_chunking": config.RAG_PARENT_CHILD_CHUNKING,
+            "parent_child_general_only": config.RAG_PARENT_CHILD_GENERAL_ONLY,
         },
     }
 

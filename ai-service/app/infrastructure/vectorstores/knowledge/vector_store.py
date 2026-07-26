@@ -232,7 +232,15 @@ class MilvusVectorStore:
             Collection(self.collection_name).load()
             return
 
-        fields = _build_fields(dim=self.embedding_dim)
+        # Single-layer fixed/recursive indexes do not need parent-child
+        # columns. Keep their new-collection schema aligned with the fields
+        # written by LEGACY_INSERT_FIELDS; parent-child indexes opt in to the
+        # extended schema through RAG_PARENT_CHILD_ENABLED.
+        fields = (
+            _build_fields(dim=self.embedding_dim)
+            if config.RAG_PARENT_CHILD_ENABLED
+            else _build_fields_fixed_only(dim=self.embedding_dim)
+        )
         schema = CollectionSchema(fields, description="混合检索 (dense + BM25) collection")
 
         # ── 核心：注册 BM25 Function ──

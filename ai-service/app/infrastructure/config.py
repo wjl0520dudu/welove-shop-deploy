@@ -43,6 +43,12 @@ class Config:
     # Defaults to the v2.3 recursive implementation.  ``fixed_v1`` is a
     # separately indexed experiment and never changes the default behavior.
     RAG_PARENT_CHILD_CHUNKING = os.getenv("RAG_PARENT_CHILD_CHUNKING", "recursive_v23").strip().lower()
+    # Mixed indexes keep product semantic units as direct retrieval records
+    # while only general knowledge uses parent-child storage/reconstruction.
+    # This must stay false for the historical all-parent-child collections.
+    RAG_PARENT_CHILD_GENERAL_ONLY = os.getenv(
+        "RAG_PARENT_CHILD_GENERAL_ONLY", "false"
+    ).lower() in ("1", "true", "yes")
 
     # 3.向量库和 embedding 配置
     # ── OpenAI 兼容通道（历史遗留，暂不删）──
@@ -69,6 +75,13 @@ class Config:
     # ── 商品多模态 v2 collection（实验链路，不影响线上旧 collection）──
     # product_mm_v2 用于评测图文混合召回：text_dense + BM25 + image_vector + multimodal_vector。
     MILVUS_PRODUCT_V2_COLLECTION = os.getenv("MILVUS_PRODUCT_V2_COLLECTION", "product_mm_v2")
+    # 生产三路检索：text dense + BM25 + image，不写图文融合向量。
+    MILVUS_PRODUCT_THREE_PATH_COLLECTION = os.getenv(
+        "MILVUS_PRODUCT_THREE_PATH_COLLECTION", "product_multimodal_prod_v1",
+    )
+    SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION = os.getenv(
+        "SHOPPING_MULTIMODAL_USE_THREE_PATH_COLLECTION", "false",
+    ).lower() in ("1", "true", "yes")
     MILVUS_IMAGE_DIM = int(os.getenv("MILVUS_IMAGE_DIM", "2560"))
     MILVUS_MULTIMODAL_DIM = int(os.getenv("MILVUS_MULTIMODAL_DIM", "2560"))
 

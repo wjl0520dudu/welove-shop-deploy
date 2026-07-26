@@ -8,6 +8,8 @@ Usage:
     cd ai-service
     python scripts/ingest_recursive_v1.py                    # full run
     python scripts/ingest_recursive_v1.py --collection knowledge_recursive_v1 --dry-run  # dry run
+    python scripts/ingest_recursive_v1.py --source general --replace
+    python scripts/ingest_recursive_v1.py --source all --replace
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.domain.knowledge.models import ChunkMetadata, DocumentChunk
 from app.domain.knowledge.recursive_chunk import build_recursive_chunks_from_text
+from scripts.ingest_general_knowledge import DOCUMENTS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +45,7 @@ CATEGORY_MAP: Dict[str, Tuple[int, str]] = {
 # Experiment-fixed recursive chunking parameters
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
+GENERAL_DOC_ID_BASE = 900000
 
 
 def _product_id_to_int(pid: str) -> int:
@@ -132,7 +136,13 @@ def build_chunks_for_product(
     return all_chunks
 
 
-def ingest_to_collection(collection_name: str, category_filter: str | None, limit: int | None, dry_run: bool = False) -> dict:
+def ingest_to_collection(
+    collection_name: str,
+    category_filter: str | None,
+    limit: int | None,
+    dry_run: bool = False,
+    replace: bool = False,
+) -> dict:
     """Ingest all product knowledge into the specified Milvus collection."""
     from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
 
@@ -163,6 +173,8 @@ def ingest_to_collection(collection_name: str, category_filter: str | None, limi
 
         if not dry_run:
             try:
+                if replace:
+                    vector_store.delete_by_doc_id(product_id_int)
                 vector_store.upsert_chunks(chunks)
             except Exception:
                 logger.exception("灌入失败：%s", json_path.name)
@@ -197,6 +209,73 @@ def ingest_to_collection(collection_name: str, category_filter: str | None, limi
     }
 
 
+def ingest_general_to_collection(
+    collection_name: str,
+    limit: int | None,
+    dry_run: bool = False,
+    replace: bool = False,
+) -> dict:
+    """Ingest static general-knowledge documents with the same recursive splitter."""
+    vector_store = None
+    if not dry_run:
+        from app.infrastructure.vectorstores.knowledge.vector_store import MilvusVectorStore
+
+        vector_store = MilvusVectorStore(collection_name=collection_name)
+
+    total_documents = 0
+    total_chunks = 0
+    doc_stats: List[dict] = []
+
+    for index, document in enumerate(DOCUMENTS[:limit] if limit is not None else DOCUMENTS, start=1):
+        doc_id = GENERAL_DOC_ID_BASE + index
+        title = str(document["name"])
+        category_id = document.get("category_id")
+        chunks = build_recursive_chunks_from_text(
+            text=str(document["content"]),
+            doc_id=doc_id,
+            title=title,
+            doc_type="general_knowledge",
+            category_id=category_id,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+        )
+        for chunk in chunks:
+            chunk.metadata.product_id = 0
+
+        if not chunks:
+            continue
+
+        if vector_store is not None:
+            if replace:
+                vector_store.delete_by_doc_id(doc_id)
+            vector_store.upsert_chunks(chunks)
+
+        total_documents += 1
+        total_chunks += len(chunks)
+        lengths = [len(chunk.content) for chunk in chunks]
+        doc_stats.append({
+            "doc_id": doc_id,
+            "product_id": "",
+            "title": title[:40],
+            "doc_type": "general_knowledge",
+            "chunks_count": len(chunks),
+            "inserted_count": len(chunks) if vector_store is not None else 0,
+            "avg_chunk_len": round(sum(lengths) / len(lengths), 1),
+            "max_chunk_len": max(lengths),
+            "min_chunk_len": min(lengths),
+        })
+        logger.info("  [general %02d] %s - %d chunks", total_documents, title, len(chunks))
+
+    return {
+        "collection": collection_name,
+        "total_products": 0,
+        "total_general": total_documents,
+        "total_chunks": total_chunks,
+        "per_category": {},
+        "doc_stats": doc_stats,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="递归分块灌入商品知识到 Milvus（knowledge_recursive_v1）")
     parser.add_argument("--collection", default="knowledge_recursive_v1",
@@ -205,25 +284,53 @@ def main():
                         help="只灌某个类目；不填=全量")
     parser.add_argument("--limit", type=int, default=None,
                         help="每个类目最多灌多少商品（冒烟测试用）")
+    parser.add_argument("--source", choices=["product", "general", "all"], default="all",
+                        help="source to ingest: product, general, or all")
     parser.add_argument("--dry-run", action="store_true",
                         help="仅生成分块统计，不写入 Milvus")
+    parser.add_argument("--replace", action="store_true",
+                        help="delete existing chunks for each source document before upsert")
     args = parser.parse_args()
 
     print("=" * 60)
     print("递归分块灌入 (recursive_v1)")
     print(f"  Collection : {args.collection}")
+    print(f"  Source     : {args.source}")
     print(f"  类目过滤   : {args.category or '全量'}")
     print(f"  每类限制   : {args.limit or '不限'}")
     print(f"  干跑       : {args.dry_run}")
     print(f"  Chunk size : {CHUNK_SIZE} / overlap: {CHUNK_OVERLAP}")
     print("=" * 60)
 
-    result = ingest_to_collection(
-        collection_name=args.collection,
-        category_filter=args.category,
-        limit=args.limit,
-        dry_run=args.dry_run,
-    )
+    results = []
+    if args.source in {"product", "all"}:
+        results.append(ingest_to_collection(
+            collection_name=args.collection,
+            category_filter=args.category,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            replace=args.replace,
+        ))
+    if args.source in {"general", "all"}:
+        results.append(ingest_general_to_collection(
+            collection_name=args.collection,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            replace=args.replace,
+        ))
+
+    result = {
+        "collection": args.collection,
+        "total_products": sum(item["total_products"] for item in results),
+        "total_general": sum(item.get("total_general", 0) for item in results),
+        "total_chunks": sum(item["total_chunks"] for item in results),
+        "per_category": {
+            category: count
+            for item in results
+            for category, count in item["per_category"].items()
+        },
+        "doc_stats": [doc for item in results for doc in item["doc_stats"]],
+    }
 
     print()
     print("=" * 60)
