@@ -70,7 +70,16 @@ class Retriever:
         return self._reranker
 
     def retrieve(self, plan: RetrievalPlan) -> RetrievalOutput:
-        if config.RAG_PARENT_CHILD_ENABLED:
+        mixed_general_parent_child = (
+            config.RAG_PARENT_CHILD_ENABLED
+            and config.RAG_PARENT_CHILD_GENERAL_ONLY
+        )
+        if mixed_general_parent_child:
+            # Product records retain their v2.1 semantic units. Only general
+            # knowledge children enter the parent reconstruction path.
+            plan = plan.model_copy(deep=True)
+            plan.chunk_types = ["child", "marketing", "faq", "review"]
+        elif config.RAG_PARENT_CHILD_ENABLED:
             # Only child chunks participate in recall/rerank. Parents are loaded
             # after precision ranking, following the adopted parent-child design.
             plan = plan.model_copy(deep=True)
@@ -103,19 +112,25 @@ class Retriever:
             recall_results = sorted(recall_results, key=lambda x: x.score or 0, reverse=True)[:final_top_k]
 
         context_results = recall_results
-        if config.RAG_PARENT_CHILD_ENABLED and hasattr(self.vector_store, "get_parent_chunks"):
-            from app.infrastructure.retrieval.parent_child import aggregate_parent_hits, build_local_parent_windows
-            child_hits = [{"parent_id": item.metadata.parent_id, "rerank_score": item.score,
-                           "child_index": item.metadata.child_index, "content": item.content}
-                          for item in recall_results if item.metadata.parent_id]
-            groups = aggregate_parent_hits(child_hits, limit=min(3, final_top_k))
-            parents = self.vector_store.get_parent_chunks([group["parent_id"] for group in groups])
-            parent_map = {str(parent.metadata.parent_id): {"parent_id": parent.metadata.parent_id,
-                          "doc_id": parent.metadata.doc_id, "content": parent.content} for parent in parents}
-            windows = build_local_parent_windows(parent_map, groups)
-            context_results = [SearchResult(content=window["content"], metadata=next(
-                parent.metadata for parent in parents if str(parent.metadata.parent_id) == str(window["parent_id"])
-            ), score=float(window["score"])) for window in windows]
+        if mixed_general_parent_child and hasattr(self.vector_store, "get_parent_chunks"):
+            direct_results = [
+                item for item in recall_results
+                if item.metadata.chunk_type != "child"
+            ]
+            parent_results = self._parent_context_results(
+                [item for item in recall_results if item.metadata.chunk_type == "child"],
+                limit=final_top_k,
+            )
+            context_results = sorted(
+                [*direct_results, *parent_results],
+                key=lambda item: item.score or 0.0,
+                reverse=True,
+            )[:final_top_k]
+        elif config.RAG_PARENT_CHILD_ENABLED and hasattr(self.vector_store, "get_parent_chunks"):
+            context_results = self._parent_context_results(
+                recall_results,
+                limit=min(3, final_top_k),
+            )
 
         return RetrievalOutput(
             plan=plan,
@@ -123,6 +138,60 @@ class Retriever:
             sources=build_sources(recall_results),
             knowledge_context=build_knowledge_context(context_results),
         )
+
+    def _parent_context_results(
+        self,
+        child_results: List[SearchResult],
+        *,
+        limit: int,
+    ) -> List[SearchResult]:
+        """Load and score parent windows for already reranked child hits."""
+        from app.infrastructure.retrieval.parent_child import (
+            aggregate_parent_hits,
+            build_local_parent_windows,
+        )
+
+        child_hits = [
+            {
+                "parent_id": item.metadata.parent_id,
+                "rerank_score": item.score,
+                "child_index": item.metadata.child_index,
+                "content": item.content,
+            }
+            for item in child_results
+            if item.metadata.parent_id
+        ]
+        groups = aggregate_parent_hits(child_hits, limit=limit)
+        if not groups:
+            return []
+
+        parents = self.vector_store.get_parent_chunks(
+            [group["parent_id"] for group in groups]
+        )
+        parent_map = {
+            str(parent.metadata.parent_id): {
+                "parent_id": parent.metadata.parent_id,
+                "doc_id": parent.metadata.doc_id,
+                "content": parent.content,
+            }
+            for parent in parents
+            if parent.metadata.parent_id
+        }
+        parent_metadata = {
+            str(parent.metadata.parent_id): parent.metadata
+            for parent in parents
+            if parent.metadata.parent_id
+        }
+        windows = build_local_parent_windows(parent_map, groups)
+        return [
+            SearchResult(
+                content=window["content"],
+                metadata=parent_metadata[str(window["parent_id"])],
+                score=float(window["score"]),
+            )
+            for window in windows
+            if str(window["parent_id"]) in parent_metadata
+        ]
 
     def _apply_rerank(
         self,

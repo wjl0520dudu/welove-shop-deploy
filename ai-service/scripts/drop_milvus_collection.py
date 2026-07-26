@@ -40,8 +40,11 @@ def main():
     print(f"[i] Milvus URL: {config.MILVUS_URL}")
     print(f"[i] Collection: {args.collection}")
 
-    connections.connect(uri=config.MILVUS_URL)
-    client = MilvusClient(uri=config.MILVUS_URL)
+    connection_kwargs = {"uri": config.MILVUS_URL}
+    if config.MILVUS_TOKEN:
+        connection_kwargs["token"] = config.MILVUS_TOKEN
+    connections.connect(**connection_kwargs)
+    client = MilvusClient(**connection_kwargs)
 
     if not client.has_collection(args.collection):
         print(f"[i] Collection '{args.collection}' 不存在，无需删除。")
