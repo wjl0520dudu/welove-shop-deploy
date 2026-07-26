@@ -105,22 +105,35 @@ jobs:
 
           selected=()
           add() { [[ " ${selected[*]} " == *" $1 "* ]] || selected+=("$1"); }
-          has_change() { grep -Eq "$1" <<<"$changes"; }
-
-          if [[ -z "$previous_tag" ]] || has_change '^(common/|gateway/|pom.xml$|mvnw$|mvnw.cmd$|\.mvn/|deploy/Dockerfile\.java$)'; then
+          add_all() {
             add welove-gateway; add welove-user-service; add welove-product-service
             add welove-trade-service; add welove-chat-service; add welove-admin-bff
+            add welove-ai-service; add welove-admin-web; add welove-shop-web
+          }
+          has_change() { grep -Eq "$1" <<<"$changes"; }
+
+          # A root .dockerignore changes every build context, therefore every
+          # image must be rebuilt. All other paths below map to their actual
+          # image build inputs.
+          if [[ -z "$previous_tag" ]] || has_change '^\.dockerignore$'; then
+            add_all
           else
-            has_change '^gateway/' && add welove-gateway
-            has_change '^services/user-service/' && add welove-user-service
-            has_change '^services/product-service/' && add welove-product-service
-            has_change '^services/trade-service/' && add welove-trade-service
-            has_change '^services/chat-service/' && add welove-chat-service
-            has_change '^admin-bff/' && add welove-admin-bff
+            if has_change '^(common/|gateway/|pom.xml$|mvnw$|mvnw.cmd$|\.mvn/|deploy/Dockerfile\.java$)'; then
+              add welove-gateway; add welove-user-service; add welove-product-service
+              add welove-trade-service; add welove-chat-service; add welove-admin-bff
+            else
+              has_change '^gateway/' && add welove-gateway
+              has_change '^services/user-service/' && add welove-user-service
+              has_change '^services/product-service/' && add welove-product-service
+              has_change '^services/trade-service/' && add welove-trade-service
+              has_change '^services/chat-service/' && add welove-chat-service
+              has_change '^admin-bff/' && add welove-admin-bff
+            fi
+
+            has_change '^ai-service/' && add welove-ai-service
+            has_change '^(web/admin-web/|deploy/Dockerfile\.admin-web|deploy/frontend-runtime-config\.sh)' && add welove-admin-web
+            has_change '^(web/welove-shop/|deploy/Dockerfile\.shop-web|deploy/frontend-runtime-config\.sh)' && add welove-shop-web
           fi
-          [[ -z "$previous_tag" ]] || has_change '^ai-service/' && add welove-ai-service
-          [[ -z "$previous_tag" ]] || has_change '^(web/admin-web/|deploy/Dockerfile\.admin-web|deploy/frontend-runtime-config\.sh)' && add welove-admin-web
-          [[ -z "$previous_tag" ]] || has_change '^(web/welove-shop/|deploy/Dockerfile\.shop-web|deploy/frontend-runtime-config\.sh)' && add welove-shop-web
 
           matrix='{"include":[]}'
           for name in "${selected[@]}"; do
@@ -174,19 +187,39 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
       - uses: docker/setup-buildx-action@v3
         if: matrix.kind != 'noop'
+      - name: Verify selected image build inputs
+        if: matrix.kind != 'noop'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.kind }}' in
+            java)
+              test -f deploy/Dockerfile.java
+              test -d '${{ matrix.module }}'
+              ;;
+            ai) test -f ai-service/Dockerfile ;;
+            admin-web) test -f deploy/Dockerfile.admin-web ;;
+            shop-web) test -f deploy/Dockerfile.shop-web ;;
+            *) echo "Unexpected image kind: ${{ matrix.kind }}" >&2; exit 1 ;;
+          esac
       - name: Build and push changed image
         if: matrix.kind != 'noop'
         env:
           GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}:${{ needs.prepare-build.outputs.release_tag }}
           ACR_IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ matrix.name }}:${{ needs.prepare-build.outputs.release_tag }}
+          IMAGE_REVISION: ${{ needs.sync-main-tag.outputs.private_sha }}
         shell: bash
         run: |
           set -euo pipefail
+          labels=(
+            --label "org.opencontainers.image.source=https://github.com/${{ env.SOURCE_REPOSITORY }}"
+            --label "org.opencontainers.image.revision=$IMAGE_REVISION"
+          )
           case '${{ matrix.kind }}' in
-            java) docker buildx build --push -f deploy/Dockerfile.java --build-arg MODULE='${{ matrix.module }}' -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
-            ai) docker buildx build --push -f ai-service/Dockerfile -t "$GHCR_IMAGE" -t "$ACR_IMAGE" ai-service ;;
-            admin-web) docker buildx build --push -f deploy/Dockerfile.admin-web -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
-            shop-web) docker buildx build --push -f deploy/Dockerfile.shop-web -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
+            java) docker buildx build --push "${labels[@]}" -f deploy/Dockerfile.java --build-arg MODULE='${{ matrix.module }}' -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
+            ai) docker buildx build --push "${labels[@]}" -f ai-service/Dockerfile -t "$GHCR_IMAGE" -t "$ACR_IMAGE" ai-service ;;
+            admin-web) docker buildx build --push "${labels[@]}" -f deploy/Dockerfile.admin-web -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
+            shop-web) docker buildx build --push "${labels[@]}" -f deploy/Dockerfile.shop-web -t "$GHCR_IMAGE" -t "$ACR_IMAGE" . ;;
           esac
 
   promote-unchanged:
